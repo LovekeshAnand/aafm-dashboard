@@ -285,3 +285,9 @@ all the tier one do's are completed with this right?
 
 ---
 
+
+## Prompt 35 (2026-11-17 18:27 IST)
+
+i have completed the checklist and checked everything by my own and tested every feature thoroughly and also lets make a list for tier tw containing what we have to complete for tier two
+
+---
