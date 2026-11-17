@@ -2,6 +2,7 @@ import { z } from "zod";
 import { pool, withContext } from "../db/pool.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import { closeSockets } from "../realtime.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import {
@@ -133,6 +134,7 @@ const selectContext = asyncHandler(async (req, res) => {
   if (!membership) throw new ApiError(404, "Membership not found");
   if (!(await rotateSession(res, req.auth.token, membership.id)))
     throw new ApiError(401, "Not signed in");
+  closeSockets({ token: req.auth.token }); // the old session id is dead
 
   res.json(
     new ApiResponse(200, { active_membership: membership }, "Context selected")
@@ -188,11 +190,13 @@ const changePassword = asyncHandler(async (req, res) => {
     "DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2",
     [user_id, hashToken(token)]
   );
+  closeSockets({ userId: user_id, exceptToken: token });
   res.json(new ApiResponse(200, null, "Password changed"));
 });
 
 const logout = asyncHandler(async (req, res) => {
   await endSession(res, req.auth.token);
+  closeSockets({ token: req.auth.token });
   res.json(new ApiResponse(200, null, "Signed out"));
 });
 

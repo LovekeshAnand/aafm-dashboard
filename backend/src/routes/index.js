@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { ADMINS, EDITORS, ROLES } from "../constants.js";
+import * as alerts from "../controllers/alert.controller.js";
 import * as auth from "../controllers/auth.controller.js";
 import * as dashboards from "../controllers/dashboard.controller.js";
 import * as metrics from "../controllers/metric.controller.js";
@@ -61,5 +62,7 @@ router.delete("/widgets/:id", editors, dashboards.deleteWidget);
 
 router.get("/metrics/series", metrics.series);
 router.get("/metrics/summary", metrics.summary);
+router.get("/metrics/kpi", metrics.kpiSeries);
+router.get("/alerts", alerts.listAlerts);
 
 export { router };

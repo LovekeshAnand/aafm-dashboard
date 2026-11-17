@@ -169,3 +169,78 @@ describe("live dashboard sync", () => {
     assert.equal(after.find((u) => u.name === "Alice Admin").editing, true);
   });
 });
+
+describe("team channel (Tier 2 A)", () => {
+  test("a new dashboard reaches the same team and the Super Admin, never another team", async () => {
+    const bobCookie = await signIn("bob");
+    const alice = open(await signIn("alice", "Finance"));
+    const carol = open(await signIn("carol"));
+    const sam = open(await signIn("super"));
+    for (const s of [alice, carol, sam])
+      assert.equal(await connected(s), "connected");
+
+    let carolHeard = false;
+    carol.on("dashboards:changed", () => (carolHeard = true));
+    const aliceHears = once(alice, "dashboards:changed");
+    const samHears = once(sam, "dashboards:changed");
+
+    const created = await rest(bobCookie, "POST", "/dashboards", {
+      name: `rt-test-list-${Date.now()}`,
+    });
+    const [[forAlice], [forSam]] = await Promise.all([aliceHears, samHears]);
+    assert.equal(forAlice.kind, "created");
+    assert.equal(forAlice.dashboard_id, created.id);
+    assert.equal(forSam.team_id, created.team_id);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(
+      carolHeard,
+      false,
+      "Marketing must not hear about Finance dashboards"
+    );
+  });
+});
+
+describe("live metrics simulator (Tier 2 B)", () => {
+  test("a tick writes one point per metric per team and pushes each team only its own", async () => {
+    const { runTick } = await import("../src/simulator.js");
+    const bob = open(await signIn("bob"));
+    const carol = open(await signIn("carol"));
+    assert.equal(await connected(bob), "connected");
+    assert.equal(await connected(carol), "connected");
+
+    // Let this test claim the interval even if a running dev server ticked a moment ago.
+    await owner.query(
+      "UPDATE simulator_state SET last_tick = now() - interval '1 hour'"
+    );
+    const bobTick = once(bob, "metrics:tick");
+    const carolTick = once(carol, "metrics:tick");
+    const rows = await runTick(5);
+
+    const { rows: teams } = await owner.query("SELECT id, name FROM teams");
+    assert.equal(
+      rows.length,
+      teams.length * 5,
+      "one point per team per metric"
+    );
+
+    const finance = teams.find((t) => t.name === "Finance").id;
+    const marketing = teams.find((t) => t.name === "Marketing").id;
+    const [[forBob], [forCarol]] = await Promise.all([bobTick, carolTick]);
+    assert.equal(forBob.team_id, finance);
+    assert.equal(forCarol.team_id, marketing);
+    assert.deepEqual(forBob.points.map((p) => p.metric).sort(), [
+      "clicks",
+      "errors",
+      "page_views",
+      "revenue",
+      "users",
+    ]);
+
+    assert.deepEqual(
+      await runTick(5),
+      [],
+      "a second tick in the same interval is skipped"
+    );
+  });
+});

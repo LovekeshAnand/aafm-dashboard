@@ -24,7 +24,7 @@ import ReactGridLayout, {
   verticalCompactor,
 } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
-import { SeriesChart, StatTile } from "@/components/charts";
+import { type ChartBand, SeriesChart, StatTile } from "@/components/charts";
 import { useSession } from "@/components/session";
 import {
   Button,
@@ -38,14 +38,21 @@ import {
   Spinner,
 } from "@/components/ui";
 import { api, ApiError, errorText } from "@/lib/api";
+import { useAlerts } from "@/lib/alerts";
 import {
   ADMINS,
   type Dashboard,
   EDITORS,
+  type Kpi,
+  KPI_FORMULA,
+  KPI_LABEL,
   METRIC_LABEL,
   type Metric,
   type Point,
-  type SummaryRow,
+  type Source,
+  sourceLabel,
+  sourceOf,
+  type Summary,
   type Widget,
   type WidgetType,
 } from "@/lib/types";
@@ -53,7 +60,9 @@ import {
   type DashboardChange,
   type LiveStatus,
   type PresenceUser,
+  type MetricTick,
   useDashboardLive,
+  useSocketEvent,
 } from "@/lib/realtime";
 import { useApi } from "@/lib/use-api";
 
@@ -82,29 +91,43 @@ function WidgetBody({
   teamId,
   win,
   summary,
+  bands,
 }: {
   widget: Widget;
   teamId: string;
   win: Window;
-  summary?: SummaryRow[];
+  summary?: Summary;
+  bands: ChartBand[];
 }) {
+  const source = sourceOf(widget);
+  const query = `from=${win.from}&to=${win.to}&bucket=${RANGES[win.range].bucket}&team_id=${teamId}`;
   const path =
     widget.type === "stat"
       ? null
-      : `/metrics/series?metric=${widget.metric}&from=${win.from}&to=${win.to}&bucket=${RANGES[win.range].bucket}&team_id=${teamId}`;
+      : "kpi" in source
+        ? `/metrics/kpi?kpi=${source.kpi}&${query}`
+        : `/metrics/series?metric=${source.metric}&${query}`;
   const series = useApi<{ points: Point[] }>(path);
 
   if (widget.type === "stat") {
-    const row = summary?.find((r) => r.metric === widget.metric);
-    return row ? <StatTile {...row} /> : <Spinner />;
+    const row =
+      "kpi" in source
+        ? summary?.kpis.find((r) => r.kpi === source.kpi)
+        : summary?.metrics.find((r) => r.metric === source.metric);
+    return row ? (
+      <StatTile source={source} current={row.current} previous={row.previous} />
+    ) : (
+      <Spinner />
+    );
   }
   if (series.error) return <Notice>{errorText(series.error)}</Notice>;
   if (!series.data) return <Spinner />;
   return (
     <SeriesChart
       points={series.data.points}
-      metric={widget.metric}
+      source={source}
       kind={widget.type}
+      bands={bands}
     />
   );
 }
@@ -115,25 +138,29 @@ function WidgetForm({
   onClose,
 }: {
   initial?: Widget;
-  onSubmit: (v: {
-    type: WidgetType;
-    metric: Metric;
-    title: string;
-  }) => Promise<void>;
+  onSubmit: (v: { type: WidgetType; title: string } & Source) => Promise<void>;
   onClose: () => void;
 }) {
   const [type, setType] = useState<WidgetType>(initial?.type ?? "line");
-  const [metric, setMetric] = useState<Metric>(initial?.metric ?? "revenue");
+  // One select for both kinds of source, encoded "metric:revenue" / "kpi:arpu".
+  const [sourceValue, setSourceValue] = useState(() =>
+    initial?.kpi
+      ? `kpi:${initial.kpi}`
+      : `metric:${initial?.metric ?? "revenue"}`
+  );
   const [title, setTitle] = useState(initial?.title ?? "");
   const [error, setError] = useState("");
+  const [kind, key] = sourceValue.split(":");
+  const source: Source =
+    kind === "kpi" ? { kpi: key as Kpi } : { metric: key as Metric };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await onSubmit({
         type,
-        metric,
-        title: title.trim() || METRIC_LABEL[metric],
+        ...source,
+        title: title.trim() || sourceLabel(source),
       });
       onClose();
     } catch (err) {
@@ -143,16 +170,28 @@ function WidgetForm({
 
   return (
     <form onSubmit={submit} className="grid gap-4">
-      <Field label="Metric">
+      <Field
+        label="Shows"
+        hint={"kpi" in source ? `KPI: ${KPI_FORMULA[source.kpi]}` : undefined}
+      >
         <Select
-          value={metric}
-          onChange={(e) => setMetric(e.target.value as Metric)}
+          value={sourceValue}
+          onChange={(e) => setSourceValue(e.target.value)}
         >
-          {Object.entries(METRIC_LABEL).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
+          <optgroup label="Metrics">
+            {Object.entries(METRIC_LABEL).map(([value, label]) => (
+              <option key={value} value={`metric:${value}`}>
+                {label}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="KPIs">
+            {Object.entries(KPI_LABEL).map(([value, label]) => (
+              <option key={value} value={`kpi:${value}`}>
+                {label} ({KPI_FORMULA[value as Kpi]})
+              </option>
+            ))}
+          </optgroup>
         </Select>
       </Field>
       <Field label="Visualization">
@@ -175,12 +214,12 @@ function WidgetForm({
           ))}
         </div>
       </Field>
-      <Field label="Title" hint="Optional, defaults to the metric name">
+      <Field label="Title" hint="Optional, defaults to the metric or KPI name">
         <Input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           maxLength={100}
-          placeholder={METRIC_LABEL[metric]}
+          placeholder={sourceLabel(source)}
         />
       </Field>
       <Notice>{error}</Notice>
@@ -374,7 +413,7 @@ export function DashboardBoard({
     reload,
   } = useApi<DashboardWithWidgets>(`/dashboards/${id}`);
   const [win, setWin] = useState<Window>(() => windowFor("24h"));
-  const summary = useApi<{ metrics: SummaryRow[] }>(
+  const summary = useApi<Summary>(
     dashboard
       ? `/metrics/summary?range=${win.range}&team_id=${dashboard.team_id}&at=${win.to}`
       : null
@@ -432,6 +471,17 @@ export function DashboardBoard({
     }
   };
   const live = useDashboardLive(id, onRemoteChange, editing);
+  const { alerts } = useAlerts();
+
+  // Tier 2 B: a new tick for this dashboard's team slides the time window to "now", so every
+  // chart and number refetches its (server-aggregated) data. The previous data stays on
+  // screen while the new one loads, so there is no flicker.
+  // ponytail: one refetch per widget per tick (5 s); stream deltas instead if dashboards
+  // grow to many widgets or many concurrent viewers.
+  useSocketEvent<MetricTick>("metrics:tick", (tick) => {
+    if (dashboard && tick.team_id === dashboard.team_id)
+      setWin((w) => windowFor(w.range));
+  });
 
   const startInteraction = () => {
     dragging.current = true;
@@ -630,69 +680,98 @@ export function DashboardBoard({
                 saveLayout(next);
               }}
             >
-              {dashboard.widgets.map((w) => (
-                <div key={w.id}>
-                  <div
-                    className={cx(
-                      WIDGET_CARD,
-                      highlight.has(w.id) &&
-                        "border-accent/70 shadow-[0_0_0_1px_rgb(168_197_179/0.5),0_0_32px_-6px_rgb(168_197_179/0.45)]"
-                    )}
-                  >
-                    <div className="mb-3 flex items-center gap-2">
-                      {editing && (
-                        <span
-                          className="drag-handle cursor-grab text-ink-3 active:cursor-grabbing"
-                          aria-label="Drag to move"
-                        >
-                          <GripVertical size={16} />
-                        </span>
+              {dashboard.widgets.map((w) => {
+                const source = sourceOf(w);
+                // Tier 2 D: alerts on this widget's metric, as chart bands; an open one
+                // also marks the whole widget.
+                const widgetAlerts =
+                  "metric" in source
+                    ? alerts.filter(
+                        (a) =>
+                          a.team_id === dashboard.team_id &&
+                          a.metric === source.metric
+                      )
+                    : [];
+                const anomaly = widgetAlerts.find((a) => a.status === "open");
+                return (
+                  <div key={w.id}>
+                    <div
+                      className={cx(
+                        WIDGET_CARD,
+                        anomaly
+                          ? "border-danger/60 shadow-[0_0_0_1px_rgb(248_113_113/0.35),0_0_32px_-8px_rgb(248_113_113/0.45)]"
+                          : highlight.has(w.id) &&
+                              "border-accent/70 shadow-[0_0_0_1px_rgb(168_197_179/0.5),0_0_32px_-6px_rgb(168_197_179/0.45)]"
                       )}
-                      <h3 className="min-w-0 flex-1 truncate text-sm font-medium">
-                        {w.title || METRIC_LABEL[w.metric]}
-                      </h3>
-                      {editing ? (
-                        <>
-                          <IconButton
-                            label="Edit widget"
-                            onClick={() =>
-                              setModal({ kind: "edit", widget: w })
-                            }
-                            className="size-7"
+                    >
+                      <div className="mb-3 flex items-center gap-2">
+                        {editing && (
+                          <span
+                            className="drag-handle cursor-grab text-ink-3 active:cursor-grabbing"
+                            aria-label="Drag to move"
                           >
-                            <Pencil size={14} />
-                          </IconButton>
-                          <IconButton
-                            label="Remove widget"
-                            onClick={() =>
-                              run(
-                                () => api(`/widgets/${w.id}`, "DELETE"),
-                                "Widget removed"
-                              )
-                            }
-                            tone="danger"
-                            className="size-7"
+                            <GripVertical size={16} />
+                          </span>
+                        )}
+                        <h3 className="min-w-0 flex-1 truncate text-sm font-medium">
+                          {w.title || sourceLabel(source)}
+                        </h3>
+                        {anomaly && (
+                          <span
+                            className="rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-medium text-danger"
+                            title={`${Math.abs(anomaly.z).toFixed(1)}σ ${anomaly.direction} its last hour`}
                           >
-                            <Trash2 size={14} />
-                          </IconButton>
-                        </>
-                      ) : (
-                        <span className="text-xs text-ink-3">
-                          {METRIC_LABEL[w.metric]}
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-h-0 flex-1">
-                      <WidgetBody
-                        widget={w}
-                        teamId={dashboard.team_id}
-                        win={win}
-                        summary={summary.data?.metrics}
-                      />
+                            Anomaly
+                          </span>
+                        )}
+                        {editing ? (
+                          <>
+                            <IconButton
+                              label="Edit widget"
+                              onClick={() =>
+                                setModal({ kind: "edit", widget: w })
+                              }
+                              className="size-7"
+                            >
+                              <Pencil size={14} />
+                            </IconButton>
+                            <IconButton
+                              label="Remove widget"
+                              onClick={() =>
+                                run(
+                                  () => api(`/widgets/${w.id}`, "DELETE"),
+                                  "Widget removed"
+                                )
+                              }
+                              tone="danger"
+                              className="size-7"
+                            >
+                              <Trash2 size={14} />
+                            </IconButton>
+                          </>
+                        ) : (
+                          <span className="text-xs text-ink-3">
+                            {"kpi" in source ? "KPI" : sourceLabel(source)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="min-h-0 flex-1">
+                        <WidgetBody
+                          widget={w}
+                          teamId={dashboard.team_id}
+                          win={win}
+                          summary={summary.data}
+                          bands={widgetAlerts.map((a) => ({
+                            from: a.opened_at,
+                            to: a.resolved_at,
+                            open: a.status === "open",
+                          }))}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </ReactGridLayout>
           )
         )}

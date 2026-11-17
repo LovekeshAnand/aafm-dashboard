@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { ROLES } from "../constants.js";
+import { closeSockets, publishTeamEvent } from "../realtime.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -48,6 +49,9 @@ const createTeam = asyncHandler(async (req, res) => {
       [req.auth.org_id, name]
     )
   );
+  publishTeamEvent(req.auth.org_id, team.id, "teams:changed", {
+    kind: "created",
+  });
   res.status(201).json(new ApiResponse(201, team, "Team created"));
 });
 
@@ -62,6 +66,9 @@ const renameTeam = asyncHandler(async (req, res) => {
     )
   );
   if (!team) throw new ApiError(404, "Not found");
+  publishTeamEvent(req.auth.org_id, team.id, "teams:changed", {
+    kind: "renamed",
+  });
   res.json(new ApiResponse(200, team, "Team renamed"));
 });
 
@@ -70,6 +77,9 @@ const deleteTeam = asyncHandler(async (req, res) => {
     db.query("DELETE FROM teams WHERE id = $1", [req.params.id])
   );
   if (!rowCount) throw new ApiError(404, "Not found");
+  publishTeamEvent(req.auth.org_id, req.params.id, "teams:changed", {
+    kind: "deleted",
+  });
   res.json(new ApiResponse(200, null, "Team deleted"));
 });
 
@@ -173,6 +183,7 @@ const resetPassword = asyncHandler(async (req, res) => {
     ])
   );
   if (!ok) throw new ApiError(404, "Not found");
+  closeSockets({ userId: req.params.id }); // every session of that user was revoked
   res.json(
     new ApiResponse(
       200,

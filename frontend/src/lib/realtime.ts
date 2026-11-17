@@ -7,18 +7,30 @@ import { io, type Socket } from "socket.io-client";
 // (http://localhost:8000); in production it's unset, so the socket uses this origin and Nginx
 // routes /socket.io to Express. The session cookie authenticates the handshake either way.
 let socket: Socket | null = null;
-export const getSocket = () =>
-  (socket ??= io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
+export const getSocket = () => {
+  if (socket) return socket;
+  const s = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
     withCredentials: true,
     autoConnect: true,
     // Must match the server: Next.js redirects "/socket.io/" (trailing slash) when proxying.
     addTrailingSlash: false,
-  }));
+  });
+  // Socket.IO never retries after the server closes a socket. The server does that whenever
+  // the session changes (team switch or sign-out in any tab, password change, 60 s recheck),
+  // which left the badge on "Reconnecting…" forever (Prompt 44). Retry once with the current
+  // cookie: a still-valid session reconnects, a revoked one fails the handshake (Offline).
+  s.on("disconnect", (reason) => {
+    if (reason === "io server disconnect") setTimeout(() => s.connect(), 1000);
+  });
+  return (socket = s);
+};
 
-/** Sign-in, team switch, password change and sign-out change the session: start a new socket. */
+/**
+ * Sign-in, team switch, password change and sign-out change the session: reconnect with the
+ * new cookie. The same socket object is kept, so mounted components keep their listeners.
+ */
 export const resetSocket = () => {
-  socket?.disconnect();
-  socket = null;
+  socket?.disconnect().connect();
 };
 
 /** The current socket id, sent as X-Socket-Id so the author's own tab skips its own echo. */
@@ -94,3 +106,31 @@ export function useDashboardLive(
 
   return { status, users };
 }
+
+/**
+ * Subscribe to a socket event for the component's lifetime (Tier 2 A/B: team-channel events
+ * such as "dashboards:changed", "teams:changed" and "metrics:tick"). The handler may change
+ * every render; the subscription doesn't.
+ */
+export function useSocketEvent<T>(
+  event: string,
+  handler: (payload: T) => void
+) {
+  const handlerRef = useRef(handler);
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
+  useEffect(() => {
+    const s = getSocket();
+    const listener = (payload: T) => handlerRef.current(payload);
+    s.on(event, listener);
+    return () => {
+      s.off(event, listener);
+    };
+  }, [event]);
+}
+
+export type MetricTick = {
+  team_id: string;
+  points: { metric: string; ts: string; value: number }[];
+};

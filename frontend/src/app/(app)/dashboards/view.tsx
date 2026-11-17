@@ -24,9 +24,12 @@ import {
   EDITORS,
   METRIC_LABEL,
   ROLE_LABEL,
-  type SummaryRow,
+  KPI_FORMULA,
+  KPI_LABEL,
+  type Summary,
   type Team,
 } from "@/lib/types";
+import { useSocketEvent } from "@/lib/realtime";
 import { useApi } from "@/lib/use-api";
 
 function CreateDashboard({
@@ -104,17 +107,23 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
   const { active_membership: active, user } = useSession();
   const dashboards = useApi<Dashboard[]>("/dashboards");
   const teams = useApi<Team[]>("/teams");
-  const summary = useApi<{ metrics: SummaryRow[] }>(
-    "/metrics/summary?range=24h"
-  );
+  const summary = useApi<Summary>("/metrics/summary?range=24h");
   const [creating, setCreating] = useState(false);
+  // Tier 2: totals follow live ticks; the switcher follows dashboards that teammates create,
+  // rename or delete.
+  useSocketEvent("metrics:tick", () => summary.reload());
+  useSocketEvent("dashboards:changed", () => dashboards.reload());
   const canEdit = !!active && EDITORS.includes(active.role);
   const orgWide = !active?.team_id;
   const teamName = (id: string) =>
     teams.data?.find((t) => t.id === id)?.name ?? "";
 
   const list = dashboards.data ?? [];
-  const boardId = selectedId ?? list[0]?.id;
+  // A link to a dashboard that no longer exists (deleted by a teammate, or a reseed) falls
+  // back to the first one instead of stranding the user on a 404 (Prompt 43).
+  const missing =
+    !!selectedId && !!dashboards.data && !list.some((d) => d.id === selectedId);
+  const boardId = missing ? list[0]?.id : (selectedId ?? list[0]?.id);
 
   const switcher = list.length > 1 && (
     <div
@@ -199,15 +208,42 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
         />
       </section>
 
-      <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Five base metrics plus ARPU (Tier 2 C): 3x2 at most, six in a row squeezed (Prompt 42). */}
+      <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {(summary.data?.metrics ?? []).map((row) => (
           <Card key={row.metric} className="h-36 p-5">
             <div className="text-sm text-ink-2">{METRIC_LABEL[row.metric]}</div>
             <div className="h-[calc(100%-1.25rem)]">
-              <StatTile {...row} />
+              <StatTile
+                source={{ metric: row.metric }}
+                current={row.current}
+                previous={row.previous}
+              />
             </div>
           </Card>
         ))}
+        {summary.data?.kpis
+          .filter((k) => k.kpi === "arpu")
+          .map((k) => (
+            <Card key={k.kpi} className="h-36 p-5">
+              <div
+                className="truncate text-sm text-ink-2"
+                title={KPI_FORMULA[k.kpi]}
+              >
+                {KPI_LABEL[k.kpi]}{" "}
+                <span className="text-xs text-ink-3">
+                  · {KPI_FORMULA[k.kpi]}
+                </span>
+              </div>
+              <div className="h-[calc(100%-1.25rem)]">
+                <StatTile
+                  source={{ kpi: k.kpi }}
+                  current={k.current}
+                  previous={k.previous}
+                />
+              </div>
+            </Card>
+          ))}
       </div>
 
       {dashboards.loading ? (
@@ -220,12 +256,22 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
           {canEdit && " Create the first one from the banner."}
         </div>
       ) : (
-        <DashboardBoard
-          key={boardId}
-          id={boardId}
-          switcher={switcher || undefined}
-          onChanged={dashboards.reload}
-        />
+        <>
+          {missing && (
+            <div className="mb-4">
+              <Notice tone="info">
+                That dashboard no longer exists. Showing{" "}
+                {list.find((d) => d.id === boardId)?.name} instead.
+              </Notice>
+            </div>
+          )}
+          <DashboardBoard
+            key={boardId}
+            id={boardId}
+            switcher={switcher || undefined}
+            onChanged={dashboards.reload}
+          />
+        </>
       )}
 
       <Modal

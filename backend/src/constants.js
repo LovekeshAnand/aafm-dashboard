@@ -13,6 +13,7 @@ export const METRICS = Object.freeze([
   "page_views",
   "clicks",
   "errors",
+  "users",
 ]);
 export const WIDGET_TYPES = Object.freeze(["line", "bar", "stat"]);
 
@@ -30,4 +31,13 @@ export const SESSION = Object.freeze({
     sameSite: "strict",
     path: "/",
   },
+});
+
+// Tier 2 C: built-in KPIs, each a ratio of two base metrics, computed on read as
+// sum(numerator) / sum(denominator) over the same bucket (a ratio of sums, never an
+// average of per-point ratios). Zero denominator -> null, never Infinity.
+export const KPIS = Object.freeze({
+  arpu: { numerator: "revenue", denominator: "users" },
+  ctr: { numerator: "clicks", denominator: "page_views" },
+  error_rate: { numerator: "errors", denominator: "page_views" },
 });

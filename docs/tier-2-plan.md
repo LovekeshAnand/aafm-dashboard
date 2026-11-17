@@ -25,22 +25,22 @@ Brief, page 2, Tier 2:
 
 ## Work list (depth first: one item finished before the next)
 
-### A. Foundation: per-team live channel (fixes #25, needed by C, D and E)
-- [ ] The socket joins a `team:<id>` room on connect (org room for the Super Admin), next to the dashboard room.
-- [ ] Broadcast dashboard created / renamed / deleted and team renamed / deleted to the team room; the switcher updates live.
-- [ ] Tests: a team-room event reaches only that team; the Super Admin gets every team in the org.
+### A. Foundation: per-team live channel (fixes #25, needed by C, D and E) **(done 18:38, Prompt 38)**
+- [x] The socket joins a `team:<id>` room on connect (org room for the Super Admin), next to the dashboard room.
+- [x] Broadcast dashboard created / renamed / deleted and team renamed / deleted to the team room; the switcher updates live.
+- [x] Tests: a team-room event reaches only that team; the Super Admin gets every team in the org.
 
-### B. Live metrics simulator (brief item 5)
-- [ ] Simulator: every 5 s (configurable) insert one point per team per metric, continuing the seeded daily curve with noise.
+### B. Live metrics simulator (brief item 5) **(done 18:38, Prompt 38)**
+- [x] Simulator: every 5 s (configurable) insert one point per team per metric, continuing the seeded daily curve with noise.
   - It runs as the owner role, since the app role can't write metrics (Tier 1 rule).
-- [ ] Publish `metrics:tick` to each team room: team, metric, ts, value.
-- [ ] Charts and stat tiles append points in place: no refetch, no layout jump; the time window slides.
-- [ ] Inject a rare spike (for example 1 in 400 points) so anomaly detection has something real to find.
-- [ ] Data retention: keep N days and prune older points (documented ceiling).
-- [ ] Tests: a tick reaches only its own team; points are written and visible under RLS.
+- [x] Publish `metrics:tick` to each team room: team, metric, ts, value.
+- [x] Charts and stat tiles stay current; the time window slides. **Built differently:** each tick triggers a refetch of the server-aggregated data, with no flicker and no layout jump, rather than appending points in place. This was simpler and exact, with a ceiling noted in the code (one request per widget every 5 s).
+- [x] Rare anomalies for detection to find. **Built as** 3-minute "incidents" (×4) instead of single spikes, because a single 5-second spike disappears inside a 5-minute bucket.
+- [x] Data retention (30 days, pruned hourly): keep N days and prune older points (documented ceiling).
+- [x] Tests: a tick reaches only its own team; one point per metric per team; a second tick in the same interval is skipped. (RLS reads of the new points are covered by the existing series tests.)
 
 ### C. KPI calculations (brief item 3)
-- [ ] Add the base metric **`users`** (active users per bucket) to the enum, seed and simulator. ARPU needs it (Q1).
+- [x] Add the base metric **`users`** (done with B) (active users per bucket) to the enum, seed and simulator. ARPU needs it (Q1).
 - [ ] Built-in KPIs, each a ratio of two base metrics computed per time bucket on the server:
   - **ARPU** = revenue / users
   - **CTR** = clicks / page_views
@@ -75,11 +75,68 @@ Brief, page 2, Tier 2:
 - [ ] Postman collection: KPI and alert endpoints.
 - [ ] Tier 2 test checklist (like Tier 1's), then the user's review.
 
+---
+
+## As built: C, D, E (Prompt 41, 2026-11-17 23:43 IST)
+
+The checkboxes above are the original plan. This section records what was actually built, **including where the design changed and why**.
+
+**C. KPIs: done.**
+- `GET /metrics/kpi?kpi=arpu|ctr|error_rate&from&to&bucket[&team_id]`. Each bucket is `sum(numerator) / NULLIF(sum(denominator), 0)`, so a zero denominator gives `null` (a gap), never Infinity.
+- `GET /metrics/summary` now also returns `kpis` (a ratio of the same totals). The home page has an **ARPU** card next to the five metric cards.
+- **Changed from the plan:** there's no separate `kpi` widget *type*. A widget now has a **source**, a metric *or* a KPI (migration `005`, `CHECK ((metric IS NULL) <> (kpi IS NULL))`). That means any KPI can be a line, a bar or a number, and the "Shows" picker lists Metrics and KPIs together. Each seeded dashboard gets an ARPU widget.
+
+**D. Anomaly detection: done.**
+- Migration `004`, `app.detect_anomalies()`, run every 30 s by the instance that wrote the tick.
+  - The rule: current 5-minute sum vs the previous hour's twelve 5-minute buckets.
+  - `z = (current − mean) / max(σ, 10% of mean)`.
+  - **Open** an alert at |z| > 2 (both directions, so a drop alerts too). **Resolve** it at |z| < 1.5.
+- **Changed from the plan:**
+  1. **Trailing 1 hour instead of 24 h.** A 24 h window puts the ±30% daily cycle inside σ, which would fire false alarms at every daily peak.
+  2. **Hysteresis instead of "N consecutive points".** A stricter recovery threshold is what Datadog (recovery thresholds), Zabbix (recovery expressions) and Elastic (recovery conditions) use to stop flapping ([Datadog](https://datadoghq.com/blog/introducing-recovery-thresholds), [Zabbix](https://www.zabbix.com/documentation/devel/en/manual/config/triggers/best_practices), [NinjaOne](https://www.ninjaone.com/blog/how-to-tune-overlapping-monitoring-thresholds-in-rmm/)). The 5-minute rolling sum already smooths single blips.
+  3. **No per-team rules,** per Prompt 38.
+- **Guards:**
+  - at least 50 minutes of baseline;
+  - the current window must be ≥ 90% covered by live ticks, so there's no alert after a restart gap;
+  - the σ floor.
+  - At most one open alert per team and metric (unique index).
+- `alerts` table under RLS. `GET /alerts?status=open|all`. `alerts:changed` goes to the team channel.
+- **UI:**
+  - a sidebar **Alerts** bell with the open count and a list;
+  - a toast when an alert opens;
+  - an **Anomaly** badge and red border on affected widgets;
+  - red bands on charts over the alert period (solid while open, faint once resolved).
+
+**E. Hardening and wrap-up: done.**
+- Following the OWASP WebSocket Security Cheat Sheet ([OWASP](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html)):
+  - **sockets close immediately** on sign-out, team switch, password change (other sessions) and admin reset (all sessions);
+  - **100 messages per minute** per connection, then disconnect;
+  - messages limited to 10 KB;
+  - the Origin allowlist, per-action authorization and the 60 s session recheck (already built).
+- Postman: a new folder "07 Tier 2" (11 requests). The collection now has **64 requests**; **77/77 assertions** pass against a live server.
+- Tests: **58/58** backend.
+  - New `test/tier2.test.js` (9): exact ARPU values, divide-by-zero gap, KPI RLS, widget source rules, spike opens one alert and recovery resolves it, no alert without history, alert RLS, logout closes the socket, rate limit.
+  - New `test/unit.test.js` (8 pure unit tests).
+- Checklist: `docs/tier-2-test-checklist.md`.
+
+**Known ceilings:**
+- Charts refetch on every tick.
+- Detection scans one hour of points per series every 30 s; add rollups if data grows.
+- KPI widgets don't draw alert bands, because alerts are on base metrics.
+- Postman can't drive Socket.IO, so real-time is covered by the Node test suites instead.
+
 Suggested order: **A → B → D → C → E**. B produces the live data that D detects on; C is independent and can slot anywhere after A.
 
 ---
 
-## Questions for the user
+## Decisions (Prompt 38)
+
+1. **Users metric:** add `users` (active users) as a fifth base metric, fully visible like the others (stat tile, line and bar charts), so the user count can be seen directly. ARPU = revenue / users.
+2. **KPI scope:** follow the brief exactly: built-in KPI calculations with ARPU as the headline (plus the two ratios over existing metrics). No formula builder; custom metrics stay in Tier 3.
+3. **Anomaly rules:** no sensitivity settings in Tier 2. One fixed default rule per metric (2σ over 24 h, with noise protection) is built in; tuning comes later.
+4. **Alerts:** shown inside the dashboard only.
+
+## Questions for the user (answered above)
 
 - **Q1. Users metric.** ARPU needs a "users" count, which doesn't exist yet. Should I add `users` (active users) as a fifth simulated base metric?
 - **Q2. KPI scope.** Built-in KPIs only (ARPU, CTR, error rate) for Tier 2, leaving custom formulas to Tier 3, or a small formula builder now?

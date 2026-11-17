@@ -1,6 +1,6 @@
 // Mirrors the backend's snake_case JSON.
 export type Role = "super_admin" | "admin" | "editor" | "viewer";
-export type Metric = "revenue" | "page_views" | "clicks" | "errors";
+export type Metric = "revenue" | "page_views" | "clicks" | "errors" | "users";
 export type WidgetType = "line" | "bar" | "stat";
 
 export type Membership = {
@@ -47,7 +47,9 @@ export type Dashboard = {
 export type Widget = {
   id: string;
   type: WidgetType;
-  metric: Metric;
+  /** Exactly one of metric / kpi is set (Tier 2 C). */
+  metric: Metric | null;
+  kpi: Kpi | null;
   title: string;
   x: number;
   y: number;
@@ -57,8 +59,56 @@ export type Widget = {
   version: number;
 };
 
-export type Point = { t: string; value: number };
+/** value is null for a KPI bucket whose denominator is zero (drawn as a gap). */
+export type Point = { t: string; value: number | null };
 export type SummaryRow = { metric: Metric; current: number; previous: number };
+export type KpiRow = {
+  kpi: Kpi;
+  current: number | null;
+  previous: number | null;
+};
+export type Summary = { metrics: SummaryRow[]; kpis: KpiRow[] };
+
+// --- Tier 2 C: built-in KPIs (ratios of sums of two base metrics, computed on the server)
+export type Kpi = "arpu" | "ctr" | "error_rate";
+export const KPI_LABEL: Record<Kpi, string> = {
+  arpu: "ARPU",
+  ctr: "Click-through rate",
+  error_rate: "Error rate",
+};
+export const KPI_FORMULA: Record<Kpi, string> = {
+  arpu: "Revenue ÷ Active users",
+  ctr: "Clicks ÷ Page views",
+  error_rate: "Errors ÷ Page views",
+};
+
+/** What a widget or tile shows: a base metric or a KPI. */
+export type Source = { metric: Metric } | { kpi: Kpi };
+export const sourceOf = (w: Pick<Widget, "metric" | "kpi">): Source =>
+  w.kpi ? { kpi: w.kpi } : { metric: w.metric as Metric };
+export const sourceKey = (s: Source) => ("kpi" in s ? s.kpi : s.metric);
+export const sourceLabel = (s: Source) =>
+  "kpi" in s ? KPI_LABEL[s.kpi] : METRIC_LABEL[s.metric];
+/** For errors and the error rate, going down is the good direction. */
+export const lowerIsBetter = (s: Source) =>
+  ("metric" in s && s.metric === "errors") ||
+  ("kpi" in s && s.kpi === "error_rate");
+
+// --- Tier 2 D: anomaly alerts
+export type Alert = {
+  id: string;
+  team_id: string;
+  metric: Metric;
+  status: "open" | "resolved";
+  direction: "above" | "below";
+  value: number;
+  mean: number;
+  stddev: number;
+  z: number;
+  peak_z: number;
+  opened_at: string;
+  resolved_at: string | null;
+};
 
 export const EDITORS: Role[] = ["super_admin", "admin", "editor"];
 export const ADMINS: Role[] = ["super_admin", "admin"];
@@ -75,6 +125,7 @@ export const METRIC_LABEL: Record<Metric, string> = {
   page_views: "Page views",
   clicks: "Clicks",
   errors: "Errors",
+  users: "Active users",
 };
 
 export const formatMetric = (metric: Metric, value: number) =>
@@ -89,3 +140,19 @@ export const formatMetric = (metric: Metric, value: number) =>
         notation: "compact",
         maximumFractionDigits: 1,
       }).format(value);
+
+const percent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  maximumFractionDigits: 2,
+});
+const currency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+});
+
+export const formatKpi = (kpi: Kpi, value: number) =>
+  kpi === "arpu" ? currency.format(value) : percent.format(value);
+
+export const formatSource = (s: Source, value: number) =>
+  "kpi" in s ? formatKpi(s.kpi, value) : formatMetric(s.metric, value);

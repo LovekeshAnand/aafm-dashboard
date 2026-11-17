@@ -27,6 +27,7 @@ import {
 } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import { type Member, type Role, ROLE_LABEL, type Team } from "@/lib/types";
+import { useSocketEvent } from "@/lib/realtime";
 import { useApi } from "@/lib/use-api";
 
 const TEAM_ROLES: Role[] = ["admin", "editor", "viewer"];
@@ -381,6 +382,7 @@ function Members({ team, canManage }: { team: Team; canManage: boolean }) {
 export default function TeamsPage() {
   const { active_membership: active } = useSession();
   const teams = useApi<Team[]>("/teams");
+  useSocketEvent("teams:changed", () => teams.reload());
   const isSuper = active?.role === "super_admin";
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modal, setModal] = useState<"create" | "rename" | null>(null);

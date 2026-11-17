@@ -4,6 +4,7 @@ import { ArrowLeftRight, LayoutDashboard, LogOut, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, Suspense } from "react";
+import { AlertsPanel, AlertToaster } from "@/components/alerts-panel";
 import { Brand } from "@/components/auth-shell";
 import {
   FullPageSpinner,
@@ -75,6 +76,8 @@ function Sidebar() {
         })}
       </nav>
 
+      <AlertsPanel orgWide={!active?.team_id} />
+
       <div className="mt-auto flex items-center gap-3 rounded-xl px-2 py-2">
         <span className="grid size-9 place-items-center rounded-full bg-gradient-to-br from-ink to-accent text-sm font-semibold text-black">
           {user.name.slice(0, 1).toUpperCase()}
@@ -129,11 +132,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     <Suspense fallback={<FullPageSpinner />}>
       <SessionProvider>
         <div className="relative flex min-h-dvh w-full">
-          {/* Backdrop art (frontend/assets), dimmed on the left so text stays readable;
+          {/* Backdrop art (frontend/assets), softly blurred (Prompt 39; scaled 5% so the blur never
+              shows soft edges) and dimmed on the left so text stays readable;
               the frosted panels blur whatever sits behind them. */}
           <div
             aria-hidden
-            className="pointer-events-none fixed inset-0 -z-10 bg-[url(/images/aurora-ring-wide.jpg)] bg-cover bg-center opacity-80"
+            className="pointer-events-none fixed inset-0 -z-10 bg-[url(/images/aurora-ring-wide.jpg)] scale-105 bg-cover bg-center opacity-80 blur-sm"
           />
           <div
             aria-hidden
@@ -144,6 +148,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <MobileBar />
             {children}
           </main>
+          <AlertToaster />
         </div>
       </SessionProvider>
     </Suspense>

@@ -61,7 +61,13 @@ Back every feature I suggest with research from the internet. Cite the sources (
   - Dev: the frontend uses `NEXT_PUBLIC_SOCKET_URL=http://localhost:8000`. Prod: Nginx routes `/socket.io` to Express.
 - **Tests:** `npm run migrate && npm run seed && npm test` runs a real-DB, real-HTTP suite (`test/`). It must stay green before review.
 - **Order:** Tier 1 only, backend first, then frontend. Move to the next tier only after the current one is done.
-- **Data:** metrics are simulated test data. Support four metrics: revenue, page views, clicks, errors.
+- **Data:** metrics are simulated test data. Five base metrics: revenue, page views, clicks, errors and active users (`users`, added for ARPU, Prompt 38).
+- **Tier 2 (Prompts 37–41):**
+  - Live simulator: `app.simulate_tick`, every `SIMULATOR_INTERVAL_SECONDS`.
+  - KPIs: ARPU, CTR and error rate, computed as ratios of sums. A widget's source is a metric *or* a KPI.
+  - Anomaly alerts: a fixed rule, 2σ vs the trailing hour, closing at |z| < 1.5 (hysteresis). In-dashboard only.
+  - Team and org socket channels carry `dashboards:changed`, `teams:changed`, `metrics:tick` and `alerts:changed`.
+  - Details: `docs/tier-2-plan.md` § As built.
 - **Roles:** there's a Super Admin over the whole organization, then an Admin for each team (department), plus Editors and Viewers. The Super Admin creates the organization and has full edit and delete rights plus oversight of every team and member (Prompt 7).
 - **Accounts (AWS IAM style, Prompt 7):** a Super Admin or Admin creates users and shares the credentials. The server generates a one-time password, shows it once, and forces a password change at first sign-in. There's no self-sign-up for members. An email that already has an account just gets the new membership (Prompt 8).
 - **Org bootstrap (Prompt 8):** public sign-up creates the organization and its Super Admin in one step, like AWS root sign-up.

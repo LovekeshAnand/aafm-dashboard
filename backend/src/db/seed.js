@@ -23,17 +23,18 @@ const MEMBERSHIPS = [
   ["dave@acme.test", "Marketing", "admin"],
 ];
 
-// 7 days at 5-minute resolution: base x daily cycle x +/-15% noise, scaled per team.
+// 7 days at 5-minute resolution: base x daily cycle x +/-15% noise, scaled per team with
+// app.team_scale() so the live simulator (migration 003) continues the same curve.
 const SEED_METRICS_SQL = `
   INSERT INTO metric_points (org_id, team_id, metric, ts, value)
   SELECT t.org_id, t.id, m.metric, ts,
          round((m.base * t.scale
                 * (1 + 0.3 * sin(2 * pi() * extract(hour FROM ts) / 24))
                 * (0.85 + random() * 0.3))::numeric, 2)
-  FROM (SELECT id, org_id, CASE name WHEN 'Finance' THEN 1.0 ELSE 1.6 END AS scale
+  FROM (SELECT id, org_id, app.team_scale(id) AS scale
         FROM teams WHERE org_id = $1) t
   CROSS JOIN (VALUES ('revenue'::metric_name, 500.0), ('page_views', 1200.0),
-                     ('clicks', 300.0), ('errors', 5.0)) m(metric, base)
+                     ('clicks', 300.0), ('errors', 5.0), ('users', 120.0)) m(metric, base)
   CROSS JOIN generate_series(date_trunc('minute', now()) - interval '7 days',
                              date_trunc('minute', now()), interval '5 minutes') ts`;
 
@@ -93,7 +94,13 @@ const seed = async () => {
          VALUES ($1, $2, $3, 'line', 'revenue', 'Revenue', 0, 0, 6, 4),
                 ($1, $2, $3, 'line', 'page_views', 'Page views', 6, 0, 6, 4),
                 ($1, $2, $3, 'stat', 'clicks', 'Clicks', 0, 4, 3, 2),
-                ($1, $2, $3, 'stat', 'errors', 'Errors', 3, 4, 3, 2)`,
+                ($1, $2, $3, 'stat', 'errors', 'Errors', 3, 4, 3, 2),
+                ($1, $2, $3, 'stat', 'users', 'Active users', 6, 4, 3, 2)`,
+        [dashboard.id, org.id, team.id]
+      );
+      await client.query(
+        `INSERT INTO widgets (dashboard_id, org_id, team_id, type, kpi, title, x, y, w, h)
+         VALUES ($1, $2, $3, 'stat', 'arpu', 'ARPU', 9, 4, 3, 2)`,
         [dashboard.id, org.id, team.id]
       );
     }

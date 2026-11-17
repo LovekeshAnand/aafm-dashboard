@@ -2,12 +2,18 @@ import { createAdapter } from "@socket.io/postgres-adapter";
 import { Server } from "socket.io";
 import { SESSION } from "./constants.js";
 import { pool, withContext } from "./db/pool.js";
-import { resolveSession } from "./utils/session.js";
+import { hashToken, resolveSession } from "./utils/session.js";
 
 // Real-time dashboard sync + presence (Prompts 32-33).
 // Events carry ids only, never dashboard data: each browser re-reads under its own RLS.
 let io;
 const room = (dashboardId) => `dashboard:${dashboardId}`;
+const teamRoom = (teamId) => `team:${teamId}`;
+const orgRoom = (orgId) => `org:${orgId}`;
+// Keyed by the token's hash, never the token itself (room names are visible to the adapter).
+const sessionRoom = (token) => `session:${hashToken(token).toString("hex")}`;
+const userRoom = (userId) => `user:${userId}`;
+const MESSAGES_PER_MINUTE = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REVALIDATE_MS = 60_000;
 
@@ -82,6 +88,32 @@ const initRealtime = (httpServer) => {
   });
 
   io.on("connection", (socket) => {
+    // Tier 2 A: every socket also listens to its scope's channel. A team session gets its
+    // team; an org-wide (Super Admin) session gets the org channel, which carries every
+    // team's events. These carry list-level changes, live metric ticks and alerts.
+    const { orgId, teamId } = socket.data.context;
+    socket.join([
+      teamId ? teamRoom(teamId) : orgRoom(orgId),
+      // OWASP WebSocket Cheat Sheet: on logout, close the user's sockets immediately. These
+      // rooms let a REST logout / password change / reset find them (across instances).
+      sessionRoom(socket.data.token),
+      userRoom(socket.data.userId),
+    ]);
+
+    // OWASP WebSocket Cheat Sheet: rate-limit messages ("100 messages per minute is a common
+    // starting point"). A client over the limit is disconnected.
+    let windowStart = Date.now();
+    let count = 0;
+    socket.use((packet, next) => {
+      const now = Date.now();
+      if (now - windowStart > 60_000) {
+        windowStart = now;
+        count = 0;
+      }
+      if (++count > MESSAGES_PER_MINUTE) return socket.disconnect(true);
+      next();
+    });
+
     const leaveCurrent = async () => {
       const current = socket.data.dashboardId;
       if (!current) return;
@@ -162,4 +194,33 @@ const publishDashboardChange = (dashboardId, change, { req } = {}) => {
   });
 };
 
-export { initRealtime, publishDashboardChange };
+/**
+ * A team-level event (Tier 2 A): goes to that team's channel and to its org channel (the
+ * Super Admins), never to other teams. Payloads carry ids/values for that team only.
+ */
+const publishTeamEvent = (orgId, teamId, event, payload) => {
+  if (!io) return;
+  io.to([teamRoom(teamId), orgRoom(orgId)]).emit(event, {
+    team_id: teamId,
+    ...payload,
+  });
+};
+
+/**
+ * Close live connections when their session ends (OWASP: on logout, close the user's sockets
+ * immediately; the 60 s recheck stays as the backstop).
+ * - `{ token }`: that session (logout, team switch).
+ * - `{ userId, exceptToken }`: every session of the user except one (password change keeps
+ *   the current session; reset revokes all of them).
+ */
+const closeSockets = ({ token, userId, exceptToken }) => {
+  if (!io) return;
+  if (token) return io.in(sessionRoom(token)).disconnectSockets(true);
+  const target = io.in(userRoom(userId));
+  (exceptToken
+    ? target.except(sessionRoom(exceptToken))
+    : target
+  ).disconnectSockets(true);
+};
+
+export { closeSockets, initRealtime, publishDashboardChange, publishTeamEvent };

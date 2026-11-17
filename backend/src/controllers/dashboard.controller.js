@@ -1,6 +1,14 @@
 import { z } from "zod";
-import { METRICS, WIDGET_TYPES } from "../constants.js";
-import { publishDashboardChange } from "../realtime.js";
+import { KPIS, METRICS, WIDGET_TYPES } from "../constants.js";
+import { publishDashboardChange, publishTeamEvent } from "../realtime.js";
+
+// Tier 2 A: list-level changes go to the whole team channel so switchers update live (#25).
+const publishList = (req, teamId, kind, dashboardId) =>
+  publishTeamEvent(req.auth.org_id, teamId, "dashboards:changed", {
+    kind,
+    dashboard_id: dashboardId,
+    actor: { user_id: req.auth.user_id, name: req.auth.name },
+  });
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -15,13 +23,17 @@ const grid = {
   w: z.int().min(1).max(12),
   h: z.int().min(1).max(12),
 };
+// A widget shows exactly one source: a base metric, or a built-in KPI (Tier 2 C).
 const widgetFields = {
   type: z.enum(WIDGET_TYPES),
   metric: z.enum(METRICS),
+  kpi: z.enum(Object.keys(KPIS)),
   title: z.string().trim().max(100),
   config: z.record(z.string(), z.unknown()),
   ...grid,
 };
+const oneSource = (w) => (w.metric === undefined) !== (w.kpi === undefined);
+const atMostOneSource = (w) => !(w.metric && w.kpi);
 
 const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -29,15 +41,20 @@ const listSchema = z.object({
 });
 const createSchema = z.strictObject({ name, team_id: z.uuid().optional() });
 const renameSchema = z.strictObject({ name, version });
-const widgetSchema = z.strictObject({
-  ...widgetFields,
-  title: widgetFields.title.default(""),
-  config: widgetFields.config.default({}),
-});
+const widgetSchema = z
+  .strictObject({
+    ...widgetFields,
+    metric: widgetFields.metric.optional(),
+    kpi: widgetFields.kpi.optional(),
+    title: widgetFields.title.default(""),
+    config: widgetFields.config.default({}),
+  })
+  .refine(oneSource, "Choose exactly one of metric or kpi");
 const widgetUpdateSchema = z
   .strictObject(widgetFields)
   .partial()
-  .extend({ version });
+  .extend({ version })
+  .refine(atMostOneSource, "Choose metric or kpi, not both");
 const layoutSchema = z.strictObject({
   items: z
     .array(z.strictObject({ id: z.uuid(), ...grid }))
@@ -91,6 +108,7 @@ const createDashboard = asyncHandler(async (req, res) => {
       [req.auth.org_id, teamId, body.name, req.auth.user_id]
     )
   );
+  publishList(req, dashboard.team_id, "created", dashboard.id);
   res.status(201).json(new ApiResponse(201, dashboard, "Dashboard created"));
 });
 
@@ -104,7 +122,7 @@ const getDashboard = asyncHandler(async (req, res) => {
     );
     if (!row) throw new ApiError(404, "Not found");
     const { rows: widgets } = await db.query(
-      `SELECT id, type, metric, title, x, y, w, h, config, version, updated_at
+      `SELECT id, type, metric, kpi, title, x, y, w, h, config, version, updated_at
        FROM widgets WHERE dashboard_id = $1 ORDER BY y, x`,
       [row.id]
     );
@@ -131,15 +149,21 @@ const renameDashboard = asyncHandler(async (req, res) => {
     { kind: "renamed", name: dashboard.name },
     { req }
   );
+  publishList(req, dashboard.team_id, "renamed", dashboard.id);
   res.json(new ApiResponse(200, dashboard, "Dashboard updated"));
 });
 
 const deleteDashboard = asyncHandler(async (req, res) => {
-  const { rowCount } = await req.db((db) =>
-    db.query("DELETE FROM dashboards WHERE id = $1", [req.params.id])
+  const {
+    rows: [deleted],
+  } = await req.db((db) =>
+    db.query("DELETE FROM dashboards WHERE id = $1 RETURNING team_id", [
+      req.params.id,
+    ])
   );
-  if (!rowCount) throw new ApiError(404, "Not found");
+  if (!deleted) throw new ApiError(404, "Not found");
   publishDashboardChange(req.params.id, { kind: "deleted" }, { req });
+  publishList(req, deleted.team_id, "deleted", req.params.id);
   res.json(new ApiResponse(200, null, "Dashboard deleted"));
 });
 
@@ -150,10 +174,21 @@ const addWidget = asyncHandler(async (req, res) => {
     rows: [widget],
   } = await req.db((db) =>
     db.query(
-      `INSERT INTO widgets (dashboard_id, org_id, team_id, type, metric, title, x, y, w, h, config)
-       SELECT id, org_id, team_id, $2, $3, $4, $5, $6, $7, $8, $9 FROM dashboards WHERE id = $1
-       RETURNING id, dashboard_id, type, metric, title, x, y, w, h, config, version, updated_at`,
-      [req.params.id, w.type, w.metric, w.title, w.x, w.y, w.w, w.h, w.config]
+      `INSERT INTO widgets (dashboard_id, org_id, team_id, type, metric, kpi, title, x, y, w, h, config)
+       SELECT id, org_id, team_id, $2, $3, $10, $4, $5, $6, $7, $8, $9 FROM dashboards WHERE id = $1
+       RETURNING id, dashboard_id, type, metric, kpi, title, x, y, w, h, config, version, updated_at`,
+      [
+        req.params.id,
+        w.type,
+        w.metric ?? null,
+        w.title,
+        w.x,
+        w.y,
+        w.w,
+        w.h,
+        w.config,
+        w.kpi ?? null,
+      ]
     )
   );
   if (!widget) throw new ApiError(404, "Dashboard not found");
@@ -171,11 +206,15 @@ const updateWidget = asyncHandler(async (req, res) => {
     const {
       rows: [row],
     } = await db.query(
-      `UPDATE widgets SET type = coalesce($3, type), metric = coalesce($4, metric), title = coalesce($5, title),
+      `UPDATE widgets SET type = coalesce($3, type),
+              -- switching source clears the other one, keeping exactly one (widgets_one_source)
+              metric = CASE WHEN $11::text IS NOT NULL THEN NULL ELSE coalesce($4, metric) END,
+              kpi = CASE WHEN $4::metric_name IS NOT NULL THEN NULL ELSE coalesce($11, kpi) END,
+              title = coalesce($5, title),
               x = coalesce($6, x), y = coalesce($7, y), w = coalesce($8, w), h = coalesce($9, h),
               config = coalesce($10, config)
        WHERE id = $1 AND version = $2
-       RETURNING id, dashboard_id, type, metric, title, x, y, w, h, config, version, updated_at`,
+       RETURNING id, dashboard_id, type, metric, kpi, title, x, y, w, h, config, version, updated_at`,
       [
         req.params.id,
         w.version,
@@ -187,6 +226,7 @@ const updateWidget = asyncHandler(async (req, res) => {
         w.w,
         w.h,
         w.config,
+        w.kpi,
       ]
     );
     if (!row) throw await missingOrStale(db, "widgets", req.params.id);

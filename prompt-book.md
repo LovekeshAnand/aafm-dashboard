@@ -291,3 +291,65 @@ all the tier one do's are completed with this right?
 i have completed the checklist and checked everything by my own and tested every feature thoroughly and also lets make a list for tier tw containing what we have to complete for tier two
 
 ---
+
+## Prompt 38 (2026-11-17 18:32 IST)
+
+### Questions Claude asked (after Prompt 37, from `docs/tier-2-plan.md`)
+
+1. Users metric: should "users" (active users) be added as a fifth simulated base metric, so ARPU can be computed?
+2. KPI scope: only built-in KPIs (ARPU, CTR, error rate) for Tier 2, with custom formulas left to Tier 3?
+3. Anomaly rules: should Admins set k, window and metric per team, or start with one default rule per metric?
+4. Alert delivery: in-app only for Tier 2 (webhooks are Tier 3)?
+
+### User's prompt
+
+i agree with your decisions and it aligns well with our goal and here are answers to your questions, 1. if ARPU needs we should add it as average revenue per user also need that metric to be perfectly visible so we can get the user count also. 2. for tier 2 we will align ourselves with the defined goal of the pdf. 3. lets not focus on the alert sensitivity as it is not that much required in tier 2 we can tackle it later for now lets focus on the core features requested by the tier 2. 4. yes in tier 2 we will keep in-dashboard only
+
+---
+
+## Prompt 39 (2026-11-17 23:05 IST)
+
+can you blur the background a bit
+
+---
+
+## Prompt 40 (2026-11-17 23:30 IST)
+
+ok so lets get back to tier 2, what is the current status tier 2
+
+---
+
+## Prompt 41 (2026-11-17 23:34 IST)
+
+### Question Claude asked (after Prompt 40)
+
+1. Should Claude go ahead with D (anomaly alerts)?
+
+### User's prompt
+
+yes, lets complete tier 2 completely along with the frontend and then we will start reviewing the work and complete testing, also focus on thr rules and make sure to complete tier 2 properly with postman collection completion along with the unit tests
+
+---
+
+## Prompt 42 (2026-11-18 01:14 IST)
+
+[Screenshot: dashboards home as Super Admin; six summary cards in one row, ARPU label wrapping; "Dashboard not found, or it belongs to another team." under the cards]
+
+the KPIs and ARPUs widgets and other components are squeezing into the screen so lets fix it
+
+---
+
+## Prompt 43 (2026-11-18 01:20 IST)
+
+Dashboard not found, or it belongs to another team. i am getting this error
+
+---
+
+## Prompt 44 (2026-11-18 01:26 IST)
+
+[Screenshot 1: the dashboard's live indicator showing "Reconnecting…"]
+[Screenshot 2: proposed background, a dark image with green wave ridges along the bottom]
+
+ok so now i have few questions first, we will address the issues and then we will start working on the tier 2 checklist 1. collaboration is always at reconnecting so i wanna know root cause for it [Image #13]. 2. i wanna test anamoly alert also in the dashboard so guide for it. 3. arpu in the bottom widgets is 4.19 dollar in finance dashboard and 4.16 in marketing one but at the top widget it shows 4.17 so i wanna clarify this. and change the background to this [Image #14]
+
+---

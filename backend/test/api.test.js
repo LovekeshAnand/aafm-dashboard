@@ -395,7 +395,7 @@ describe("metrics", () => {
     assert.equal(res.status, 400);
   });
 
-  test("summary has current and previous totals for all four metrics", async () => {
+  test("summary has current and previous totals for all five metrics", async () => {
     const res = await (
       await signIn("bob")
     ).call("GET", "/metrics/summary?range=24h");
@@ -404,6 +404,7 @@ describe("metrics", () => {
       "errors",
       "page_views",
       "revenue",
+      "users",
     ]);
   });
 });
