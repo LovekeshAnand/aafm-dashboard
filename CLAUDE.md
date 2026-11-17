@@ -29,6 +29,11 @@ Back every feature I suggest with research from the internet. Cite the sources (
 - Never run `git commit` or `git push` until the user explicitly approves.
 - Flow: build, then the user tests and reviews, then the user decides whether to commit or push.
 
+## Rule 6a: The user does all UI review (Prompt 17)
+- Never use Claude in Chrome (or any browser automation) on this project.
+- The user reviews every UI change themselves, and every change goes through them.
+- I verify with typecheck, lint, build and API tests, then hand over for review.
+
 ## Rule 7: Code hygiene
 - Keep the code clean across the whole project: consistent formatting (Prettier config in `backend/`), no dead code, no stray debug logs, and clear names.
 - Backend controllers use the shared utils in `backend/src/utils/`: `ApiError`, `ApiResponse`, `asyncHandler`. Reuse them instead of writing new ones.
@@ -44,6 +49,16 @@ Back every feature I suggest with research from the internet. Cite the sources (
   - Index every column used by RLS policies or for filtering.
   - Migrations are append-only once anything has been deployed. Before the first deploy, `001_tenancy.sql` may still be edited in place.
 - **API conventions:** snake_case JSON in both requests and responses (matches the DB, so no mapping layer). SQL lives in the controllers, always inside `req.db()`, which is `withContext`. Every handler uses `asyncHandler`, `ApiResponse` and `ApiError`.
+- **Frontend (Prompt 13):** `frontend/` uses Next.js 16.4 (App Router, `src/`), TypeScript, Tailwind v4, and the same Prettier config as the backend.
+  - Next 16 differs from training data, so read `frontend/node_modules/next/dist/docs/` before using an API.
+  - The browser talks only to the Next origin. In development, `/api/*` is rewritten to Express (`BACKEND_URL`). In production, Nginx routes `/api/*` straight to Express (problems-log #13).
+  - Design follows the user's references in `frontend/assets/inspo/`.
+- **Real-time (Prompts 32–33):** Socket.IO 4.8 plus `@socket.io/postgres-adapter`, which fans out across instances with Postgres NOTIFY. Scope is dashboard edits plus presence.
+  - Events carry ids only; every browser re-reads under its own RLS.
+  - The socket authenticates with the session cookie and passes an Origin check (`CORS_ORIGIN`). The session is re-checked on every join and every 60 s.
+  - Writes send `X-Socket-Id` so the author's tab isn't echoed.
+  - The path is `/socket.io` with no trailing slash (`addTrailingSlash: false` on both ends).
+  - Dev: the frontend uses `NEXT_PUBLIC_SOCKET_URL=http://localhost:8000`. Prod: Nginx routes `/socket.io` to Express.
 - **Tests:** `npm run migrate && npm run seed && npm test` runs a real-DB, real-HTTP suite (`test/`). It must stay green before review.
 - **Order:** Tier 1 only, backend first, then frontend. Move to the next tier only after the current one is done.
 - **Data:** metrics are simulated test data. Support four metrics: revenue, page views, clicks, errors.

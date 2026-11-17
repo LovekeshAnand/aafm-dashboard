@@ -17,6 +17,8 @@ const nextConfig: NextConfig = {
   },
   rewrites: async () => [
     { source: "/api/:path*", destination: `${backendUrl}/api/:path*` },
+    // Real-time fallback when NEXT_PUBLIC_SOCKET_URL is unset (Socket.IO long-polling).
+    { source: "/socket.io", destination: `${backendUrl}/socket.io` },
   ],
 };
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { METRICS, WIDGET_TYPES } from "../constants.js";
+import { publishDashboardChange } from "../realtime.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -125,6 +126,11 @@ const renameDashboard = asyncHandler(async (req, res) => {
     if (!row) throw await missingOrStale(db, "dashboards", req.params.id);
     return row;
   });
+  publishDashboardChange(
+    dashboard.id,
+    { kind: "renamed", name: dashboard.name },
+    { req }
+  );
   res.json(new ApiResponse(200, dashboard, "Dashboard updated"));
 });
 
@@ -133,6 +139,7 @@ const deleteDashboard = asyncHandler(async (req, res) => {
     db.query("DELETE FROM dashboards WHERE id = $1", [req.params.id])
   );
   if (!rowCount) throw new ApiError(404, "Not found");
+  publishDashboardChange(req.params.id, { kind: "deleted" }, { req });
   res.json(new ApiResponse(200, null, "Dashboard deleted"));
 });
 
@@ -150,6 +157,11 @@ const addWidget = asyncHandler(async (req, res) => {
     )
   );
   if (!widget) throw new ApiError(404, "Dashboard not found");
+  publishDashboardChange(
+    widget.dashboard_id,
+    { kind: "widget_added", widget_ids: [widget.id] },
+    { req }
+  );
   res.status(201).json(new ApiResponse(201, widget, "Widget added"));
 });
 
@@ -180,14 +192,28 @@ const updateWidget = asyncHandler(async (req, res) => {
     if (!row) throw await missingOrStale(db, "widgets", req.params.id);
     return row;
   });
+  publishDashboardChange(
+    widget.dashboard_id,
+    { kind: "widget_updated", widget_ids: [widget.id] },
+    { req }
+  );
   res.json(new ApiResponse(200, widget, "Widget updated"));
 });
 
 const deleteWidget = asyncHandler(async (req, res) => {
-  const { rowCount } = await req.db((db) =>
-    db.query("DELETE FROM widgets WHERE id = $1", [req.params.id])
+  const {
+    rows: [deleted],
+  } = await req.db((db) =>
+    db.query("DELETE FROM widgets WHERE id = $1 RETURNING dashboard_id", [
+      req.params.id,
+    ])
   );
-  if (!rowCount) throw new ApiError(404, "Not found");
+  if (!deleted) throw new ApiError(404, "Not found");
+  publishDashboardChange(
+    deleted.dashboard_id,
+    { kind: "widget_removed", widget_ids: [req.params.id] },
+    { req }
+  );
   res.json(new ApiResponse(200, null, "Widget deleted"));
 });
 
@@ -211,6 +237,11 @@ const saveLayout = asyncHandler(async (req, res) => {
     }
     return rows;
   });
+  publishDashboardChange(
+    req.params.id,
+    { kind: "layout", widget_ids: widgets.map((w) => w.id) },
+    { req }
+  );
   res.json(new ApiResponse(200, widgets, "Layout saved"));
 });
 

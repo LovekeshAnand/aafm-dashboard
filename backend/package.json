@@ -17,15 +17,18 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@socket.io/postgres-adapter": "^0.5.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.4",
     "helmet": "^8.3.0",
     "pg": "^8.23.1",
+    "socket.io": "^4.8.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "prettier": "^3.10.1"
+    "prettier": "^3.10.1",
+    "socket.io-client": "^4.8.4"
   }
 }
