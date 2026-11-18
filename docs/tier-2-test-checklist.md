@@ -1,6 +1,6 @@
 # Tier 2: Test Checklist
 
-Written for Prompt 41 (2026-11-17 23:45 IST). Each item says **how** to test it and what to **expect**.
+Written for Prompt 41 (2026-11-17 23:45 IST) and updated for Prompt 45 (2026-11-18 01:45 IST) with the fixes from Prompts 42–44 (problems-log #30–33). Each item says **how** to test it and what to **expect**.
 
 Tier 2 scope (brief, page 2):
 1. Several users edit the same dashboard at once
@@ -19,7 +19,7 @@ Tier 2 scope (brief, page 2):
 | 0.2 | `npm run seed` | `seeded … metric points`. Each dashboard now has **Active users** and **ARPU** widgets. |
 | 0.3 | `backend/.env` has `CORS_ORIGIN=http://localhost:3000`; `frontend/.env.local` has `NEXT_PUBLIC_SOCKET_URL=http://localhost:8000` | Needed for anything live |
 | 0.4 | Restart `npm run dev` in both apps | The backend logs `API listening on :8000` and starts the simulator (one tick every 5 s) |
-| 0.5 | **Leave the backend running for at least 1 hour before section 5.** | Anomaly detection needs 50 minutes of live history as its baseline |
+| 0.5 | Let the backend run **5 minutes** before section 6. Corrected in Prompt 44 (it said 1 hour). | Detection compares the live last 5 minutes with the previous hour. Right after `npm run seed` that hour is already covered by seeded history. Only if the backend was **stopped** for over ~10 minutes in the last hour does it need up to an hour to refill. |
 
 ---
 
@@ -46,18 +46,26 @@ Tier 2 scope (brief, page 2):
 - [ ] **3.3 Team changes are live.** As Super Admin in one window and an Admin in another, create or rename a team. Expected: Teams & people updates in both windows without a refresh.
 - [ ] **3.4 Sign-out closes the live connection immediately (OWASP).**
   - Sign out in one tab while another tab of the same session shows a dashboard.
-  - Expected: the other tab's indicator leaves **Live** straight away, not after a minute.
+  - Expected: the other tab's indicator leaves **Live** straight away (it shows **Offline**), not after a minute.
+- [ ] **3.5 Reconnects after a session change (fix #32).**
+  - Open a dashboard in two tabs of the same browser. In tab B, switch team (or switch back).
+  - Expected: tab A's indicator returns to **Live** within about 1 second. It never sticks on "Reconnecting…".
+- [ ] **3.6 Stale dashboard links (fix #31).**
+  - Open a dashboard, copy its URL, delete that dashboard (or reseed), then open the copied URL.
+  - Expected: the first available dashboard is shown, with a note: "That dashboard no longer exists. Showing … instead." There's no dead-end error.
 
 ## 4. Live metrics and Active users (brief item 5)
 
 - [ ] **4.1** Open any dashboard on **1H**. Expected: the charts move forward about every 5 seconds with no flicker, and the number widgets update.
-- [ ] **4.2** The home page has six cards: **Revenue, Page views, Clicks, Errors, Active users, ARPU**. Expected: the values change live, and Active users shows a user count.
+- [ ] **4.2** The home page has six cards: **Revenue, Page views, Clicks, Errors, Active users, ARPU**. Expected: at most 3 per row (3x2 on desktop, fix #30); nothing wraps or squeezes; the values change live; Active users shows a user count.
 - [ ] **4.3** Add a widget → "Shows" → **Active users** as a line chart. Expected: a live chart of the user count.
 - [ ] **4.4** Isolation: as Carol (Marketing), only Marketing's numbers move. Expected: Finance ticks never change Marketing's widgets. The automated test covers this.
 
 ## 5. KPI calculations (brief item 3)
 
-- [ ] **5.1 ARPU widget.** The seeded **ARPU** number widget shows dollars per user, e.g. "$4.17". Expected: it equals Revenue ÷ Active users for the same period, which you can compare against the Revenue and Active users cards on the home page.
+- [ ] **5.1 ARPU widget.** The seeded **ARPU** number widget on each team dashboard shows that team's dollars per user (e.g. Finance $4.19, Marketing $4.16).
+  - Expected: it equals that team's Revenue ÷ Active users for the same period.
+  - The home-page ARPU card for the Super Admin is **org-wide**: total revenue ÷ total users (e.g. $4.17). It always lies between the team values, closer to the team with more users. It is *not* the average of the team ARPUs (Prompt 44).
 - [ ] **5.2 KPI charts.**
   - Edit layout → Add widget → "Shows" lists **Metrics** and **KPIs**, with the formula shown under the picker.
   - Pick **ARPU** as a line chart. Expected: a chart in dollars per user.
@@ -74,7 +82,7 @@ Tier 2 scope (brief, page 2):
 
 The checks run every 30 s. Natural spikes happen at random (several per hour across all teams).
 
-**To trigger one now** (after setup step 0.5, as the DB owner):
+**To trigger one now** (after setup step 0.5, as the DB owner). Have Bob (Finance) on the **Finance Overview** dashboard first:
 
 ```
 psql "<MIGRATION_DATABASE_URL from backend/.env>" -c "INSERT INTO metric_incidents (team_id, metric, until) SELECT id, 'errors', now() + interval '6 minutes' FROM teams WHERE name = 'Finance' ON CONFLICT (team_id, metric) DO UPDATE SET until = excluded.until"
@@ -82,7 +90,7 @@ psql "<MIGRATION_DATABASE_URL from backend/.env>" -c "INSERT INTO metric_inciden
 
 This multiplies Finance's errors by 4 for 6 minutes.
 
-- [ ] **6.1 Opens.** Within about 1–3 minutes, Bob's window shows:
+- [ ] **6.1 Opens.** Have Carol (Marketing) open in an incognito window too. Within about 1–2 minutes, Bob's window shows:
   - a **toast**: "Anomaly detected · Errors 3.xσ above normal";
   - the sidebar **Alerts** bell with **1**;
   - the **Errors** widget with a red border and an **Anomaly** badge;

@@ -68,6 +68,11 @@ Back every feature I suggest with research from the internet. Cite the sources (
   - Anomaly alerts: a fixed rule, 2σ vs the trailing hour, closing at |z| < 1.5 (hysteresis). In-dashboard only.
   - Team and org socket channels carry `dashboards:changed`, `teams:changed`, `metrics:tick` and `alerts:changed`.
   - Details: `docs/tier-2-plan.md` § As built.
+- **Tier 3 (Prompts 47–48):** plan in `docs/tier-3-plan.md`, built in the order A → B → D → C → E.
+  - Projects are reached through the team (Sentry model).
+  - Audit log: named reads plus writes, auth events and denials; append-only and hash-chained.
+  - Webhooks: alert, dashboard and member events per team, using Standard Webhooks signing and an SSRF guard.
+  - Custom metrics: formulas per team over the base metrics.
 - **Roles:** there's a Super Admin over the whole organization, then an Admin for each team (department), plus Editors and Viewers. The Super Admin creates the organization and has full edit and delete rights plus oversight of every team and member (Prompt 7).
 - **Accounts (AWS IAM style, Prompt 7):** a Super Admin or Admin creates users and shares the credentials. The server generates a one-time password, shows it once, and forces a password change at first sign-in. There's no self-sign-up for members. An email that already has an account just gets the new membership (Prompt 8).
 - **Org bootstrap (Prompt 8):** public sign-up creates the organization and its Super Admin in one step, like AWS root sign-up.

@@ -132,12 +132,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     <Suspense fallback={<FullPageSpinner />}>
       <SessionProvider>
         <div className="relative flex min-h-dvh w-full">
-          {/* Backdrop art (frontend/assets), softly blurred (Prompt 39; scaled 5% so the blur never
-              shows soft edges) and dimmed on the left so text stays readable;
-              the frosted panels blur whatever sits behind them. */}
+          {/* Backdrop art: green waves (Prompt 44, the user's image), bottom-anchored so the
+              waves stay in view, softly blurred (Prompt 39; scaled 5% so the blur never shows
+              soft edges) and dimmed on the left so text stays readable; the frosted panels
+              blur whatever sits behind them. */}
           <div
             aria-hidden
-            className="pointer-events-none fixed inset-0 -z-10 bg-[url(/images/aurora-ring-wide.jpg)] scale-105 bg-cover bg-center opacity-80 blur-sm"
+            className="pointer-events-none fixed inset-0 -z-10 bg-[url(/images/green-waves.jpg)] scale-105 bg-cover bg-bottom opacity-80 blur-sm"
           />
           <div
             aria-hidden
