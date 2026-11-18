@@ -335,3 +335,67 @@ describe("audit checkpoint signatures", () => {
     assert.notEqual(base, sign("org-1", 42, hash, ring, "k2"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// F5 (Prompt 68): readable webhook messages for chat apps
+// ---------------------------------------------------------------------------
+const { chatBody, CHAT_HOSTS, messageText } =
+  await import("../src/utils/chat-message.js");
+
+describe("chat-app webhook messages (F5)", () => {
+  test("events read as plain sentences", () => {
+    assert.equal(
+      messageText("alert.opened", {
+        team: "Finance",
+        project: "Web App",
+        alert: { metric: "errors", direction: "above", value: 31, mean: 10 },
+      }),
+      "⚠ Finance · Web App: Errors unusually high (3.1× usual)"
+    );
+    assert.equal(
+      messageText("alert.resolved", {
+        team: "Finance",
+        alert: { metric: "errors" },
+      }),
+      "✅ Finance: Errors is back to normal"
+    );
+    assert.equal(
+      messageText("dashboard.updated", {
+        actor: { name: "Bob" },
+        dashboard: { name: "Overview" },
+        change: "widget.add",
+      }),
+      "✏️ Bob added a widget on “Overview”"
+    );
+    assert.equal(
+      messageText("member.added", { member: { name: "Ann", role: "viewer" } }),
+      "👋 Ann joined the team as Viewer"
+    );
+  });
+
+  test("each app gets its own format", () => {
+    assert.deepEqual(JSON.parse(chatBody("slack", "Hi", "https://x.test")), {
+      text: "Hi\nhttps://x.test",
+    });
+    assert.equal(
+      JSON.parse(chatBody("discord", "a".repeat(3000))).content.length,
+      2000
+    );
+    const card = JSON.parse(chatBody("teams", "Hi", "https://x.test"));
+    assert.equal(card.type, "message");
+    assert.equal(
+      card.attachments[0].contentType,
+      "application/vnd.microsoft.card.adaptive"
+    );
+    assert.equal(card.attachments[0].content.body[0].text, "Hi");
+    assert.equal(card.attachments[0].content.actions[0].url, "https://x.test");
+  });
+
+  test("Slack and Discord links are recognised", () => {
+    assert.ok(CHAT_HOSTS.slack.test("hooks.slack.com"));
+    assert.ok(!CHAT_HOSTS.slack.test("hooks.slack.com.evil.test"));
+    assert.ok(CHAT_HOSTS.discord.test("discord.com"));
+    assert.ok(CHAT_HOSTS.discord.test("discordapp.com"));
+    assert.ok(!CHAT_HOSTS.discord.test("notdiscord.com"));
+  });
+});

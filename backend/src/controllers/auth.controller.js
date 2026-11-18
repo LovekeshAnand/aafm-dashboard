@@ -6,6 +6,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { closeSockets } from "../realtime.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { audit } from "../utils/audit.js";
+import { deliver, notify } from "../utils/notify.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import {
   endSession,
@@ -216,7 +217,7 @@ const changePassword = asyncHandler(async (req, res) => {
   const { user_id, token } = req.auth;
   const newHash = await hashPassword(new_password);
 
-  await req.db(async (db) => {
+  const note = await req.db(async (db) => {
     const {
       rows: [user],
     } = await db.query("SELECT password_hash FROM users WHERE id = $1", [
@@ -230,12 +231,23 @@ const changePassword = asyncHandler(async (req, res) => {
       [user_id, newHash]
     );
     await audit(db, req, "auth.password_change", { type: "user", id: user_id });
+    // F3 + OWASP: a security notice, so an unexpected change gets noticed.
+    return notify(
+      db,
+      user_id,
+      "password_changed",
+      "Your password was changed",
+      {
+        body: "Your other sessions were signed out. If this wasn't you, tell an administrator now.",
+      }
+    );
   });
   await pool.query(
     "DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2",
     [user_id, hashToken(token)]
   );
   closeSockets({ userId: user_id, exceptToken: token });
+  deliver([note]);
   res.json(new ApiResponse(200, null, "Password changed"));
 });
 

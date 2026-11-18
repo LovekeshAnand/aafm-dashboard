@@ -5,6 +5,7 @@ import https from "node:https";
 import { BlockList, isIP } from "node:net";
 import { pool } from "./db/pool.js";
 import { publishTeamEvent } from "./realtime.js";
+import { chatBody, messageText } from "./utils/chat-message.js";
 import { logOnce } from "./utils/log-once.js";
 import { open } from "./utils/secret-box.js";
 
@@ -173,7 +174,27 @@ const decryptAndSend = (delivery) => {
       error: `Signing secret unavailable: ${err.message}`,
     };
   }
-  return send({ ...delivery, secret, previous_secret: previous });
+  return send({
+    ...delivery,
+    body: bodyFor(delivery),
+    secret,
+    previous_secret: previous,
+  });
+};
+
+// F5: chat apps (Slack, Discord, Teams) get one readable sentence in their own format, with
+// a link back to the app; developer endpoints get the signed Standard Webhooks JSON as stored.
+const appUrl = () =>
+  (
+    process.env.PUBLIC_APP_URL ??
+    process.env.CORS_ORIGIN?.split(",")[0] ??
+    ""
+  ).replace(/\/$/, "");
+const bodyFor = (delivery) => {
+  if (!delivery.format || delivery.format === "standard") return delivery.body;
+  const { type, data } = JSON.parse(delivery.body);
+  const link = appUrl() ? `${appUrl()}/dashboards` : null;
+  return chatBody(delivery.format, messageText(type, data), link);
 };
 
 /** Sends one claimed delivery and records the outcome. */

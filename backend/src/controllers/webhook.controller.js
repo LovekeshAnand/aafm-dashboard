@@ -6,6 +6,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { audit } from "../utils/audit.js";
 import { seal } from "../utils/secret-box.js";
+import { CHAT_HOSTS } from "../utils/chat-message.js";
 import { checkUrl, newSecret } from "../webhooks.js";
 
 // Tier 3 C: webhook subscriptions, managed by team Admins and the Super Admin (RLS:
@@ -31,10 +32,47 @@ const fields = {
   description: z.string().trim().max(200).default(""),
   project_id: z.uuid().nullable().default(null),
 };
-const createSchema = z.strictObject({
-  ...fields,
-  team_id: z.uuid().optional(),
-});
+// F5: where messages go. Chat apps get readable messages; "standard" is the signed JSON.
+const FORMATS = ["standard", "slack", "discord", "teams"];
+const FORMAT_NAME = {
+  slack: "Slack",
+  discord: "Discord",
+  teams: "Microsoft Teams",
+};
+
+// A Slack or Discord link must point at Slack or Discord (catches a wrong paste early), and
+// chat apps are always https.
+const urlFitsFormat = (value, format, ctx) => {
+  if (!value || !format || format === "standard") return;
+  let host, protocol;
+  try {
+    ({ hostname: host, protocol } = new URL(value));
+  } catch {
+    return; // the url field reports it
+  }
+  // Development and tests (WEBHOOK_ALLOW_PRIVATE=1, never in production) may use a plain-http
+  // local receiver, as they may already use private addresses.
+  if (protocol !== "https:" && process.env.WEBHOOK_ALLOW_PRIVATE !== "1")
+    ctx.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: `${FORMAT_NAME[format]} links start with https://`,
+    });
+  else if (CHAT_HOSTS[format] && !CHAT_HOSTS[format].test(host))
+    ctx.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: `This doesn't look like a ${FORMAT_NAME[format]} webhook link (it should be on ${format === "slack" ? "hooks.slack.com" : "discord.com"})`,
+    });
+};
+
+const createSchema = z
+  .strictObject({
+    ...fields,
+    format: z.enum(FORMATS).default("standard"),
+    team_id: z.uuid().optional(),
+  })
+  .superRefine((body, ctx) => urlFitsFormat(body.url, body.format, ctx));
 const updateSchema = z
   .strictObject({
     url,
@@ -42,14 +80,25 @@ const updateSchema = z
     description: z.string().trim().max(200),
     project_id: z.uuid().nullable(),
     enabled: z.boolean(),
+    format: z.enum(FORMATS),
   })
-  .partial();
+  .partial()
+  .superRefine((body, ctx) => urlFitsFormat(body.url, body.format, ctx));
 const listSchema = z.object({ team_id: z.uuid().optional() });
 const deliveriesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 
-const COLUMNS = `id, team_id, project_id, url, description, events, enabled, failure_count,
+// Only the host goes into the audit log: a webhook URL often carries a token (Slack, Discord).
+const hostOf = (value) => {
+  try {
+    return new URL(value).host;
+  } catch {
+    return null;
+  }
+};
+
+const COLUMNS = `id, team_id, project_id, url, format, description, events, enabled, failure_count,
   disabled_reason, created_by, created_at`;
 
 const listWebhooks = asyncHandler(async (req, res) => {
@@ -82,8 +131,8 @@ const createWebhook = asyncHandler(async (req, res) => {
     const {
       rows: [row],
     } = await db.query(
-      `INSERT INTO webhooks (org_id, team_id, project_id, url, description, events, secret, created_by, id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${COLUMNS}`,
+      `INSERT INTO webhooks (org_id, team_id, project_id, url, description, events, secret, created_by, id, format)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ${COLUMNS}`,
       [
         req.auth.org_id,
         teamId,
@@ -94,13 +143,14 @@ const createWebhook = asyncHandler(async (req, res) => {
         seal(secret, id),
         req.auth.user_id,
         id,
+        body.format,
       ]
     );
     await audit(db, req, "webhook.create", {
       type: "webhook",
       id: row.id,
       teamId,
-      meta: { url: row.url, events: row.events },
+      meta: { host: hostOf(row.url), format: row.format, events: row.events },
     });
     return row;
   });
@@ -126,6 +176,7 @@ const updateWebhook = asyncHandler(async (req, res) => {
               description = coalesce($4, description),
               project_id = CASE WHEN $5 THEN $6::uuid ELSE project_id END,
               enabled = coalesce($7, enabled),
+              format = coalesce($8, format),
               failure_count = CASE WHEN $7 THEN 0 ELSE failure_count END,
               disabled_reason = CASE WHEN $7 THEN NULL
                                      WHEN $7 = false THEN 'Disabled by an admin'
@@ -139,6 +190,7 @@ const updateWebhook = asyncHandler(async (req, res) => {
         "project_id" in body,
         body.project_id ?? null,
         body.enabled ?? null,
+        body.format ?? null,
       ]
     );
     if (!row) throw new ApiError(404, "Not found");
@@ -146,7 +198,11 @@ const updateWebhook = asyncHandler(async (req, res) => {
       type: "webhook",
       id: row.id,
       teamId: row.team_id,
-      meta: body,
+      // Never the URL itself: for Slack or Discord the link is the credential.
+      meta: {
+        ...body,
+        ...(body.url && { url: undefined, host: hostOf(body.url) }),
+      },
     });
     return row;
   });
@@ -166,7 +222,7 @@ const deleteWebhook = asyncHandler(async (req, res) => {
       type: "webhook",
       id: row.id,
       teamId: row.team_id,
-      meta: { url: row.url },
+      meta: { host: hostOf(row.url) },
     });
   });
   res.json(new ApiResponse(200, null, "Webhook deleted"));

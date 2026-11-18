@@ -31,7 +31,8 @@ export function AuthShell({
   children: ReactNode;
 }) {
   return (
-    <main className="relative grid min-h-dvh place-items-center overflow-hidden px-4 py-12">
+    <main className="theme-dark relative grid min-h-dvh place-items-center overflow-hidden bg-canvas px-4 py-12">
+      {/* theme-dark: the sign-in art is designed dark, so it stays dark in light mode (Prompt 70). */}
       {/* Animated WebGL backdrop (Prompt 15), in muted greens to match the theme.
           It listens on window for pointer events, so it can stay non-interactive itself. */}
       <GhostFibers

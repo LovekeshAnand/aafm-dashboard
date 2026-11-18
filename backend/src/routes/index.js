@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { ADMINS, EDITORS, ROLES } from "../constants.js";
+import * as access from "../controllers/access.controller.js";
 import * as alerts from "../controllers/alert.controller.js";
 import * as audit from "../controllers/audit.controller.js";
 import * as auth from "../controllers/auth.controller.js";
 import * as customMetrics from "../controllers/custom-metric.controller.js";
 import * as dashboards from "../controllers/dashboard.controller.js";
 import * as metrics from "../controllers/metric.controller.js";
+import * as notifications from "../controllers/notification.controller.js";
 import * as projects from "../controllers/project.controller.js";
 import * as teams from "../controllers/team.controller.js";
 import * as webhooks from "../controllers/webhook.controller.js";
@@ -44,6 +46,9 @@ router.post("/auth/context", signedIn, auth.selectContext);
 router.post("/auth/password", signedIn, auth.changePassword);
 router.post("/auth/logout", signedIn, auth.logout);
 router.get("/auth/me", signedIn, auth.me);
+// F3 + F4: your own notifications, also before a team is selected.
+router.get("/notifications", signedIn, notifications.listNotifications);
+router.post("/notifications/read", signedIn, notifications.markRead);
 
 // Everything below needs a session with a changed password and a selected context.
 // POSTs honour an Idempotency-Key (E20).
@@ -80,11 +85,22 @@ router.get("/metrics/custom", metrics.customSeries);
 router.get("/metrics/formula", metrics.formulaPreview);
 router.get("/alerts", alerts.listAlerts);
 
+// F7: ask another team for one figure; its Admins decide; read only that figure.
+router.get("/teams/directory", access.directory);
+router.get("/access-requests", access.listRequests);
+router.post("/access-requests", access.createRequest);
+router.post("/access-requests/:id/decide", admins, access.decide);
+router.post("/access-requests/:id/revoke", admins, access.revoke);
+router.get("/shared/:id/series", access.sharedSeries);
+router.get("/shared/:id/summary", access.sharedSummary);
+
 // Tier 3
 router.get("/projects", projects.listProjects);
 router.post("/projects", admins, projects.createProject);
 router.patch("/projects/:id", admins, projects.renameProject);
 router.delete("/projects/:id", admins, projects.deleteProject);
+router.post("/projects/:id/complete", admins, projects.completeProject);
+router.post("/projects/:id/reopen", admins, projects.reopenProject);
 
 router.get("/custom-metrics", customMetrics.listCustomMetrics);
 router.post("/custom-metrics", editors, customMetrics.createCustomMetric);

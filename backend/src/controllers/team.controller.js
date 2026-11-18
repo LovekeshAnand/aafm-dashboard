@@ -7,6 +7,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { actorOf, audit, emitWebhook } from "../utils/audit.js";
+import { deliver, notify, ROLE_NAME, teamName } from "../utils/notify.js";
 import { hashPassword } from "../utils/password.js";
 
 const name = displayName(100);
@@ -89,7 +90,7 @@ const renameTeam = asyncHandler(async (req, res) => {
 });
 
 const deleteTeam = asyncHandler(async (req, res) => {
-  const members = await req.db(async (db) => {
+  const { users, notes } = await req.db(async (db) => {
     // Read before the delete: the memberships (and their sessions) cascade away with the team.
     const { rows: users } = await db.query(
       "SELECT DISTINCT user_id FROM memberships WHERE team_id = $1",
@@ -101,17 +102,32 @@ const deleteTeam = asyncHandler(async (req, res) => {
       req.params.id,
     ]);
     if (!row) throw new ApiError(404, "Not found");
+    // F3: tell everyone who was in it.
+    const notes = await Promise.all(
+      users.map(({ user_id }) =>
+        notify(
+          db,
+          user_id,
+          "team_deleted",
+          `The team ${row.name} was deleted`,
+          {
+            body: `${req.auth.name} deleted it, so you no longer have access to its dashboards.`,
+          }
+        )
+      )
+    );
     await audit(db, req, "team.delete", {
       type: "team",
       id: row.id,
       teamId: row.id,
       meta: { name: row.name },
     });
-    return users;
+    return { users, notes };
   });
   // E12: their sessions in this team are gone; close live connections now instead of at the
   // next 60 s recheck. Sessions in other teams reconnect on their own (client retry, #42).
-  for (const { user_id } of members) closeSockets({ userId: user_id });
+  deliver(notes);
+  for (const { user_id } of users) closeSockets({ userId: user_id });
   publishTeamEvent(req.auth.org_id, req.params.id, "teams:changed", {
     kind: "deleted",
   });
@@ -143,9 +159,7 @@ const listMembers = asyncHandler(async (req, res) => {
 const addMember = asyncHandler(async (req, res) => {
   const body = memberSchema.parse(req.body);
   const password = oneTimePassword();
-  const {
-    rows: [result],
-  } = await req.db(async (db) => {
+  const outcome = await req.db(async (db) => {
     const result = await db.query(
       "SELECT * FROM app.add_member($1, $2, $3, $4, $5)",
       [
@@ -178,8 +192,22 @@ const addMember = asyncHandler(async (req, res) => {
       member,
       actor: actorOf(req),
     });
+    // F4: "You've been added to <team>" (new accounts see it at their first sign-in).
+    result.note = await notify(
+      db,
+      added.user_id,
+      "team_added",
+      `You've been added to ${await teamName(db, req.params.teamId)}`,
+      {
+        body: `${req.auth.name} added you as ${ROLE_NAME[body.role]}. Switch to it from your workspace menu.`,
+        link: "/select-team",
+        meta: { team_id: req.params.teamId, role: body.role },
+      }
+    );
     return result;
   });
+  deliver([outcome.note]);
+  const [result] = outcome.rows;
   const data = {
     membership_id: result.membership_id,
     user_id: result.user_id,
@@ -209,7 +237,7 @@ const guardLastAdmin = async (db, change) => {
 
 const updateMemberRole = asyncHandler(async (req, res) => {
   const { role } = roleSchema.parse(req.body);
-  await req.db(async (db) => {
+  const note = await req.db(async (db) => {
     const {
       rows: [change],
     } = await db.query(
@@ -226,7 +254,20 @@ const updateMemberRole = asyncHandler(async (req, res) => {
       teamId: change.team_id,
       meta: { from: change.old_role, to: role },
     });
+    if (change.old_role === role) return null;
+    // F3: "Your role in Finance is now Editor".
+    return notify(
+      db,
+      change.user_id,
+      "role_changed",
+      `Your role in ${await teamName(db, change.team_id)} is now ${ROLE_NAME[role]}`,
+      {
+        body: `${req.auth.name} changed it from ${ROLE_NAME[change.old_role]} to ${ROLE_NAME[role]}.`,
+        meta: { team_id: change.team_id, from: change.old_role, to: role },
+      }
+    );
   });
+  deliver([note]);
   res.json(new ApiResponse(200, { id: req.params.id, role }, "Role updated"));
 });
 
@@ -251,8 +292,20 @@ const removeMember = asyncHandler(async (req, res) => {
       member: { user_id: change.user_id, role: change.old_role },
       actor: actorOf(req),
     });
+    // F3: "You were removed from Finance".
+    change.note = await notify(
+      db,
+      change.user_id,
+      "team_removed",
+      `You were removed from ${await teamName(db, change.team_id)}`,
+      {
+        body: `${req.auth.name} removed your ${ROLE_NAME[change.old_role]} access to this team.`,
+        meta: { team_id: change.team_id },
+      }
+    );
     return change;
   });
+  deliver([removed.note]);
   // E12: the removed membership's sessions are gone (FK cascade); close live connections now.
   closeSockets({ userId: removed.user_id });
   res.json(new ApiResponse(200, null, "Member removed"));
@@ -269,11 +322,22 @@ const resetPassword = asyncHandler(async (req, res) => {
       req.params.id,
       passwordHash,
     ]);
-    if (result.rows[0].ok)
+    if (result.rows[0].ok) {
       await audit(db, req, "user.password_reset", {
         type: "user",
         id: req.params.id,
       });
+      // F3: the user learns why their sessions ended (shown at the next sign-in).
+      await notify(
+        db,
+        req.params.id,
+        "password_reset",
+        "Your password was reset",
+        {
+          body: `${req.auth.name} reset it. Sign in with the one-time password they give you, then choose a new one.`,
+        }
+      );
+    }
     return result;
   });
   if (!ok) throw new ApiError(404, "Not found");

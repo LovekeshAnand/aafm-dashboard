@@ -173,3 +173,39 @@ What this keeps:
 ```
 ssh ... "sudo dnf install -y docker git && sudo systemctl enable --now docker && sudo usermod -aG docker ec2-user  && sudo mkdir -p /usr/local/lib/docker/cli-plugins  && sudo curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose  && sudo curl -fsSL https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx  && sudo chmod +x /usr/local/lib/docker/cli-plugins/*  && (swapon --show | grep -q swapfile || (sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile && echo '/swapfile swap swap defaults 0 0' | sudo tee -a /etc/fstab))  && docker --version && sudo docker compose version && sudo docker buildx version && free -h"
 ```
+
+- **Disk decision (Prompt 60):** keep 8 GB, with `SIMULATOR_INTERVAL_SECONDS=15` in `deploy/.env` (about 3.5 M rows / ~1 GB for 30 days).
+
+## 10. Live hostname: aafm-dashboard.kelados.in (Prompts 61–62)
+
+- **Prompt 61:** the Worker was deployed to `https://aafm-dashboard.lovekeshanand6.workers.dev`. Pages, assets and headers were checked live; `/api` answered 403 as expected, with no backend behind it yet.
+- **Prompt 62:** the user attached `aafm-dashboard.kelados.in`. It serves the Worker, so it was most likely added as a **Workers Custom Domain**. Cloudflare recommends Custom Domains when you "do not have an application server that you want to always communicate with". A Custom Domain Worker is treated as the origin for all paths ([Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)).
+- We do have one (EC2 for `/api` and `/socket.io`), so the hostname switches to **routes**:
+  1. **(user)** Workers & Pages → `aafm-dashboard` → Settings → Domains & Routes: remove the Custom Domain `aafm-dashboard.kelados.in`. That also removes its DNS record.
+  2. **(user)** DNS for `kelados.in` → Add record: type `A`, name `aafm-dashboard`, IPv4 `13.232.231.236`, **Proxied**.
+  3. **(Claude)** `npm run deploy` with `routes: aafm-dashboard.kelados.in/*` and `workers_dev: false` (already in `wrangler.jsonc`).
+  4. **(user)** `kelados.in` → Workers Routes → Add route `aafm-dashboard.kelados.in/api/*`, Worker **None**; and again for `aafm-dashboard.kelados.in/socket.io*`.
+  5. **(user)** SSL for this hostname only, so other `kelados.in` hosts aren't affected:
+     - Rules → Configuration Rules → hostname equals `aafm-dashboard.kelados.in` → SSL **Full (strict)**;
+     - SSL/TLS → Edge Certificates → **Always Use HTTPS**.
+- Then the backend steps 2–4, with `CORS_ORIGIN=https://aafm-dashboard.kelados.in` and an Origin CA certificate for `aafm-dashboard.kelados.in`.
+
+## 11. Status: live (2026-11-18 19:11 IST)
+
+**https://aafm-dashboard.kelados.in**
+- **Pages:** the Cloudflare Worker (`aafm-dashboard.kelados.in/*` route).
+- **`/api/*` and `/socket.io*`:** no-Worker routes → EC2 `13.232.231.236`. Nginx (Origin CA cert, SSL Full) → API → Postgres 18 (Docker, internal network).
+- **Verified live:**
+  - `/api/v1/auth/me`: 401 JSON with `X-Request-Id` and HSTS;
+  - Socket.IO polling: 200;
+  - a WebSocket upgrade through Cloudflare (refused by auth without a session, as expected);
+  - direct access to the EC2 IP: refused (security group allows 443 only from the Cloudflare prefix list).
+- **Server state:**
+  - 13 migrations applied;
+  - keyring created on the server;
+  - `.env` generated on the server (the passwords never left it);
+  - ticks every 15 s.
+- **Remaining:**
+  - demo data (optional, step 5);
+  - cron jobs for backups and the Cloudflare range refresh;
+  - commit the local `wrangler.jsonc` route change.

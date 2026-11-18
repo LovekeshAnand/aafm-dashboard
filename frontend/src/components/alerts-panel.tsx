@@ -1,10 +1,10 @@
 "use client";
 
-import { Bell, ChevronDown, TrendingDown, TrendingUp, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { type AlertEvent, useAlerts } from "@/lib/alerts";
+import { type AlertEvent, describeAlert, useAlerts } from "@/lib/alerts";
 import { useSocketEvent } from "@/lib/realtime";
-import { type Alert, METRIC_LABEL, type Project, type Team } from "@/lib/types";
+import { type Alert, type Project, type Team } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
 import { cx, IconButton } from "./ui";
 
@@ -17,13 +17,10 @@ const ago = (iso: string) => {
       : `${Math.round(min / 60)} h ago`;
 };
 
-/** "Errors 4.2σ above normal" */
-const describe = (a: Pick<Alert, "metric" | "direction" | "z">) =>
-  `${METRIC_LABEL[a.metric]} ${Math.abs(a.z).toFixed(1)}σ ${a.direction} normal`;
-
 function AlertRow({ alert, where }: { alert: Alert; where: string }) {
   const open = alert.status === "open";
-  const Icon = alert.direction === "above" ? TrendingUp : TrendingDown;
+  // A warning sign while open, a check once resolved (Prompt 68: a symbol, not a σ value).
+  const Icon = open ? TriangleAlert : CheckCircle2;
   return (
     <li className="flex gap-3 rounded-lg px-2 py-2">
       <span
@@ -38,7 +35,7 @@ function AlertRow({ alert, where }: { alert: Alert; where: string }) {
         <span
           className={cx("block font-medium", open ? "text-ink" : "text-ink-2")}
         >
-          {describe(alert)}
+          {describeAlert(alert)}
         </span>
         <span className="text-ink-3">
           {where && `${where} · `}
@@ -77,7 +74,7 @@ export function AlertsPanel({ orgWide }: { orgWide: boolean }) {
         className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-ink-2 transition hover:bg-glass-strong hover:text-ink"
       >
         <span className="relative">
-          <Bell size={18} />
+          <TriangleAlert size={18} />
           {open.length > 0 && (
             <span className="absolute -top-1.5 -right-1.5 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[10px] font-semibold text-black">
               {open.length}
@@ -100,8 +97,8 @@ export function AlertsPanel({ orgWide }: { orgWide: boolean }) {
             </ul>
           ) : (
             <p className="px-3 py-4 text-xs text-ink-3">
-              No anomalies. Every metric is checked every 30 s against its last
-              hour (2σ rule).
+              No alerts. Every 30 seconds each metric is compared with its own
+              last hour, and anything unusually high or low shows up here.
             </p>
           )}
         </div>
@@ -141,10 +138,14 @@ export function AlertToaster() {
           role="alert"
           className="pointer-events-auto flex items-start gap-3 rounded-xl border border-danger/40 bg-black px-4 py-3 shadow-[0_20px_50px_-20px_rgb(0_0_0/0.8)]"
         >
-          <span className="mt-0.5 size-2 shrink-0 animate-pulse rounded-full bg-danger" />
+          <TriangleAlert
+            size={18}
+            aria-hidden
+            className="mt-0.5 shrink-0 text-danger"
+          />
           <span className="min-w-0 flex-1 text-sm">
-            <span className="block font-semibold">Anomaly detected</span>
-            <span className="text-ink-2">{describe(t)}</span>
+            <span className="block font-semibold">New alert</span>
+            <span className="text-ink-2">{describeAlert(t)}</span>
           </span>
           <IconButton
             label="Dismiss"

@@ -18,8 +18,15 @@
   ],
   // Routing (docs/deployment-plan.md): the Worker serves the app's hostname, and two routes
   // with NO Worker send /api/* and /socket.io* to the origin (EC2 behind Cloudflare), so pages,
-  // API and WebSocket share one origin. Fill in your hostname and zone, then deploy:
-  // "routes": [{ "pattern": "app.example.com/*", "zone_name": "example.com" }],
-  // The two no-Worker routes are added in the dashboard (Workers Routes), see the runbook.
+  // API and WebSocket share one origin. The hostname's DNS record points at EC2 (proxied) and
+  // this route runs the Worker on top; the two no-Worker routes
+  // (aafm-dashboard.kelados.in/api/* and /socket.io*) are set in the dashboard (Workers Routes,
+  // Worker: None). A Custom Domain would not work here: it makes the Worker the origin for
+  // every path (docs/deployment-plan.md section 8).
+  "routes": [
+    { "pattern": "aafm-dashboard.kelados.in/*", "zone_name": "kelados.in" }
+  ],
+  // One public origin only: a workers.dev copy could never sign in (no /api behind it).
+  "workers_dev": false,
   "observability": { "enabled": true }
 }

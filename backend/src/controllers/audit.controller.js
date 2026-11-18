@@ -6,79 +6,62 @@ import { audit } from "../utils/audit.js";
 
 // Tier 3 B: reading the trail. RLS shows the Super Admin the whole org and an Admin their own
 // team; reading the log is itself recorded (OWASP: monitor access to the logs).
-// E19 (Prompt 53): entries older than AUDIT_HOT_DAYS live in compressed segments. A page is
-// filled from the live rows first, then from the archive (always older), so paging is
-// seamless. `next_before` is the cursor for the next page (null when nothing older matches).
+// E19 (Prompt 53): entries older than AUDIT_HOT_DAYS live in compressed segments; the search
+// reads both, so every entry stays findable.
+const ISSUES = ["denied", "failed"];
 const listSchema = z.object({
+  q: z.string().trim().max(100).optional(), // free-text search (F6)
   actor_id: z.uuid().optional(),
   action: z
     .string()
     .regex(/^[a-z_]+(\.[a-z_]*)?$/)
     .optional(),
   team_id: z.uuid().optional(),
-  result: z.enum(["allowed", "denied", "failed"]).optional(),
+  // "issues" = refused or failed (F6: filter by issues)
+  result: z.enum(["allowed", "denied", "failed", "issues"]).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
-  before: z.coerce.number().int().positive().optional(), // keyset paging on seq
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  sort: z.enum(["newest", "oldest", "issues"]).default("newest"),
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+  size: z.coerce.number().int().min(10).max(200).default(50),
+  // Stable pages: pass back the `as_of` from page 1 (entries written later can't shift them).
+  as_of: z.coerce.number().int().positive().optional(),
 });
 
-const COLUMNS = `seq, team_id, actor_id, actor_name, action, target_type, target_id, result,
-  ip, user_agent, meta, at`;
-
+// F6 (Prompt 68): search, filters, sorting and numbered pages over live and archived entries
+// (app.audit_search, migration 015, which applies the same visibility as the RLS policy).
 const listAudit = asyncHandler(async (req, res) => {
   const q = listSchema.parse(req.query);
-  const filters = [
-    q.actor_id ?? null,
-    q.action ?? null,
-    q.team_id ?? null,
-    q.result ?? null,
-    q.from ?? null,
-    q.to ?? null,
-  ];
-  const page = await req.db(async (db) => {
-    const { rows: live } = await db.query(
-      `SELECT ${COLUMNS} FROM audit_log
-       WHERE ($1::uuid IS NULL OR actor_id = $1)
-         AND ($2::text IS NULL OR action LIKE $2 || '%')
-         AND ($3::uuid IS NULL OR team_id = $3)
-         AND ($4::text IS NULL OR result = $4)
-         AND ($5::timestamptz IS NULL OR at >= $5)
-         AND ($6::timestamptz IS NULL OR at < $6)
-         AND ($7::bigint IS NULL OR seq < $7)
-       ORDER BY seq DESC LIMIT $8`,
-      [...filters, q.before ?? null, q.limit]
+  const results = q.result === "issues" ? ISSUES : q.result ? [q.result] : null;
+  const { rows } = await req.db(async (db) => {
+    const found = await db.query(
+      "SELECT * FROM app.audit_search($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+      [
+        q.q || null,
+        q.actor_id ?? null,
+        q.action ?? null,
+        q.team_id ?? null,
+        results,
+        q.from ?? null,
+        q.to ?? null,
+        q.sort,
+        q.size,
+        (q.page - 1) * q.size,
+        q.as_of ?? null,
+      ]
     );
-    let entries = live;
-    let resume = null;
-    if (live.length < q.limit) {
-      const { rows } = await db.query(
-        "SELECT * FROM app.audit_archive_page($1, $2, $3, $4, $5, $6, $7, $8)",
-        [
-          live.length ? live[live.length - 1].seq : (q.before ?? null),
-          q.limit - live.length,
-          ...filters,
-        ]
-      );
-      const archived = rows.filter((r) => r.entry).map((r) => r.entry);
-      resume = rows.find((r) => r.resume_before)?.resume_before ?? null;
-      entries = [...live, ...archived].slice(0, q.limit);
-    }
     await audit(db, req, "audit.view", { meta: { filters: q } });
-    return { entries, resume };
+    return found;
   });
-
-  const { entries, resume } = page;
-  const next_before =
-    entries.length === q.limit
-      ? Number(entries[entries.length - 1].seq)
-      : resume === null
-        ? null
-        : Number(resume);
+  const total = rows.length ? Number(rows[0].total) : 0;
   res.json(
     new ApiResponse(200, {
-      entries: entries.map((e) => ({ ...e, seq: Number(e.seq) })),
-      next_before,
+      entries: rows.map(({ entry }) => ({ ...entry, seq: Number(entry.seq) })),
+      total,
+      page: q.page,
+      size: q.size,
+      pages: Math.max(1, Math.ceil(total / q.size)),
+      as_of: rows.length ? Number(rows[0].as_of) : (q.as_of ?? null),
     })
   );
 });

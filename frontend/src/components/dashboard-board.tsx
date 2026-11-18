@@ -2,6 +2,7 @@
 
 import {
   Check,
+  TriangleAlert,
   GripVertical,
   Maximize2,
   Move,
@@ -38,7 +39,7 @@ import {
   Spinner,
 } from "@/components/ui";
 import { api, ApiError, errorText } from "@/lib/api";
-import { useAlerts } from "@/lib/alerts";
+import { alertSummary, describeAlert, useAlerts } from "@/lib/alerts";
 import {
   ADMINS,
   type CustomMetric,
@@ -85,7 +86,10 @@ const windowFor = (range: Range): Window => ({
   to: new Date().toISOString(),
 });
 
-type DashboardWithWidgets = Dashboard & { widgets: Widget[] };
+type DashboardWithWidgets = Dashboard & {
+  widgets: Widget[];
+  project_completed_at: string | null;
+};
 
 /** The base metrics a widget's source reads: itself, a KPI's two, or a formula's names. */
 const sourceMetrics = (source: Source, customs: CustomMetric[]): Metric[] =>
@@ -455,9 +459,10 @@ function EditGuide({ canDelete }: { canDelete: boolean }) {
 }
 
 /**
- * One dashboard: toolbar (switcher or name, time range, edit controls) and the widget grid.
- * `switcher` replaces the plain title when the team has several dashboards; `onChanged`
- * lets the parent refresh its list after a rename or delete.
+ * One dashboard: toolbar (name, time range, edit controls) and the widget grid.
+ * `switcher` replaces the plain title (null hides it: the home page names the dashboard in
+ * its folder tab, Prompt 71); `onChanged` lets the parent refresh its list after a rename or
+ * delete.
  */
 export function DashboardBoard({
   id,
@@ -502,8 +507,10 @@ export function DashboardBoard({
     text: string;
   } | null>(null);
 
-  const canEdit = !!active && EDITORS.includes(active.role);
-  const canDelete = !!active && ADMINS.includes(active.role);
+  // F1: a completed project's dashboards are read-only (the database enforces it too).
+  const completed = dashboard?.project_completed_at ?? null;
+  const canEdit = !!active && EDITORS.includes(active.role) && !completed;
+  const canDelete = !!active && ADMINS.includes(active.role) && !completed;
 
   // --- Real-time (Prompts 32-33) -------------------------------------------------------
   // Someone else's change: re-read the dashboard (under our own RLS), name who did what,
@@ -637,8 +644,10 @@ export function DashboardBoard({
     <section ref={containerRef} aria-label={dashboard.name}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          {switcher ?? (
+          {switcher === undefined ? (
             <h2 className="truncate text-xl font-semibold">{dashboard.name}</h2>
+          ) : (
+            switcher
           )}
           {canEdit && (
             <IconButton
@@ -713,6 +722,20 @@ export function DashboardBoard({
 
       {editing && <EditGuide canDelete={canDelete} />}
 
+      {completed && (
+        <div className="mb-4">
+          <Notice tone="info">
+            This project was completed on{" "}
+            {new Date(completed).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
+            . Its dashboards are read-only and live data has stopped; the
+            history stays available. An Admin can reopen it from Projects.
+          </Notice>
+        </div>
+      )}
       {notice && (
         <div className="mb-4" onClick={() => setNotice(null)}>
           <Notice tone={notice.tone}>{notice.text}</Notice>
@@ -794,10 +817,10 @@ export function DashboardBoard({
                         </h3>
                         {anomaly && (
                           <span
-                            className="rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-medium text-danger"
-                            title={`${Math.abs(anomaly.z).toFixed(1)}σ ${anomaly.direction} its last hour`}
+                            className="inline-flex items-center gap-1 rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-medium text-danger"
+                            title={describeAlert(anomaly)}
                           >
-                            Anomaly
+                            <TriangleAlert size={12} aria-hidden /> Alert
                           </span>
                         )}
                         {editing ? (
@@ -846,6 +869,7 @@ export function DashboardBoard({
                             from: a.opened_at,
                             to: a.resolved_at,
                             open: a.status === "open",
+                            label: alertSummary(a),
                           }))}
                         />
                       </div>

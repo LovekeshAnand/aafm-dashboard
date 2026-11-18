@@ -8,12 +8,15 @@ import {
   ScrollText,
   Sigma,
   Users,
+  Share2,
   Webhook,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, Suspense } from "react";
 import { AlertsPanel, AlertToaster } from "@/components/alerts-panel";
+import { NotificationsPanel } from "@/components/notifications-panel";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Brand } from "@/components/auth-shell";
 import {
   FullPageSpinner,
@@ -32,6 +35,7 @@ const NAV = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/metrics", label: "Custom metrics", icon: Sigma },
   { href: "/teams", label: "Teams & people", icon: Users },
+  { href: "/shared", label: "Shared data", icon: Share2 },
   { href: "/webhooks", label: "Webhooks", icon: Webhook, admin: true },
   { href: "/audit", label: "Audit log", icon: ScrollText, admin: true },
 ];
@@ -72,31 +76,39 @@ function Sidebar() {
         )}
       </Link>
 
-      <nav className="mt-6 grid gap-1.5" aria-label="Main">
-        {navFor(active).map(({ href, label, icon: Icon }) => {
-          const current = pathname.startsWith(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              aria-current={current ? "page" : undefined}
-              className={cx(
-                "flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm transition",
-                current
-                  ? "bg-ink font-semibold text-black shadow-[0_0_24px_-6px_rgb(255_255_255/0.5)]"
-                  : "text-ink-2 hover:bg-glass-strong hover:text-ink"
-              )}
-            >
-              <Icon size={18} />
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* Prompt 71: the nav and the expandable alert/notification lists scroll inside this
+          region, so opening them never pushes the theme switch and account off the screen. */}
+      <div className="-mx-2 mt-6 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <nav className="grid gap-1.5" aria-label="Main">
+          {navFor(active).map(({ href, label, icon: Icon }) => {
+            const current = pathname.startsWith(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={current ? "page" : undefined}
+                className={cx(
+                  "flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm transition",
+                  current
+                    ? "bg-ink font-semibold text-black shadow-[0_0_24px_-6px_rgb(255_255_255/0.5)]"
+                    : "text-ink-2 hover:bg-glass-strong hover:text-ink"
+                )}
+              >
+                <Icon size={18} />
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
 
-      <AlertsPanel orgWide={!active?.team_id} />
+        <AlertsPanel orgWide={!active?.team_id} />
+        <NotificationsPanel />
+      </div>
 
-      <div className="mt-auto flex items-center gap-3 rounded-xl px-2 py-2">
+      <div className="border-t border-line pt-3">
+        <ThemeToggle />
+      </div>
+      <div className="flex items-center gap-3 rounded-xl px-2 py-2">
         <span className="grid size-9 place-items-center rounded-full bg-gradient-to-br from-ink to-accent text-sm font-semibold text-black">
           {user.name.slice(0, 1).toUpperCase()}
         </span>
@@ -139,6 +151,9 @@ function MobileBar() {
       >
         {active?.team_name ?? "Organization"}
       </Link>
+      <div className="w-28 shrink-0">
+        <ThemeToggle />
+      </div>
     </header>
   );
 }
@@ -156,7 +171,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               blur whatever sits behind them. */}
           <div
             aria-hidden
-            className="pointer-events-none fixed inset-0 -z-10 bg-[url(/images/green-waves.jpg)] scale-105 bg-cover bg-bottom opacity-80 blur-sm"
+            className="pointer-events-none fixed inset-0 -z-10 bg-[url(/images/green-waves.jpg)] scale-105 bg-cover bg-bottom opacity-80 blur-sm light:opacity-30"
           />
           <div
             aria-hidden

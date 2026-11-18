@@ -1,15 +1,29 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session";
-import { Button, Card, cx, Notice, Select, Spinner } from "@/components/ui";
+import {
+  Button,
+  Card,
+  cx,
+  IconButton,
+  Input,
+  Notice,
+  Select,
+  Spinner,
+} from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import type { AuditEntry, Team } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
 
-const PAGE = 50;
 const CATEGORIES = [
   ["", "All actions"],
   ["auth.", "Sign-in and sessions"],
@@ -31,7 +45,14 @@ const RESULT_TONE: Record<AuditEntry["result"], string> = {
   failed: "bg-warn/15 text-warn",
 };
 
-type Page = { entries: AuditEntry[]; next_before: number | null };
+type Page = {
+  entries: AuditEntry[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+  as_of: number | null;
+};
 type Storage = {
   live_entries: number;
   archived_entries: number;
@@ -52,23 +73,53 @@ const details = (e: AuditEntry) =>
     )
     .join(" · ");
 
+const EMPTY = {
+  q: "",
+  action: "",
+  result: "",
+  team: "",
+  from: "",
+  to: "",
+  sort: "newest",
+  size: "50",
+};
+
+/** Page numbers around the current one: 1 … 4 5 [6] 7 8 … 20 */
+const pageList = (page: number, pages: number) => {
+  const shown = new Set([
+    1,
+    pages,
+    page - 2,
+    page - 1,
+    page,
+    page + 1,
+    page + 2,
+  ]);
+  const list = [...shown]
+    .filter((p) => p >= 1 && p <= pages)
+    .sort((a, b) => a - b);
+  return list.flatMap((p, i) => (i && p - list[i - 1] > 1 ? ["…", p] : [p]));
+};
+
 /**
  * Tier 3 B: "who accessed what". The Super Admin sees the whole organization, a team Admin
- * their own team (RLS). The trail is append-only and hash-chained; Verify recomputes the
- * chain in the database and names the first entry that no longer matches.
+ * their own team. F6 (Prompt 68): search, an issues-only filter and issues-first sorting,
+ * dates, and numbered pages that stay stable while new entries arrive (`as_of`). The trail is
+ * append-only and hash-chained; Verify recomputes it and checks the signed checkpoints.
  */
 export default function AuditPage() {
   const { active_membership: active } = useSession();
   const teams = useApi<Team[]>("/teams");
-  const [filters, setFilters] = useState({ action: "", result: "", team: "" });
-  const [rows, setRows] = useState<AuditEntry[]>([]);
-  const [state, setState] = useState<{
-    loading: boolean;
-    next: number | null; // cursor for "Load older" (null: nothing older matches)
-    error?: string;
-  }>({ loading: true, next: null });
-  // E19: entries older than a week are packed into compressed segments; listing reads both.
   const storage = useApi<Storage>("/audit/storage");
+  const [draft, setDraft] = useState(EMPTY.q); // search box, applied after typing stops
+  const [filters, setFilters] = useState(EMPTY);
+  const [page, setPage] = useState(1);
+  const [asOf, setAsOf] = useState<number | null>(null);
+  const [result, setResult] = useState<{
+    data?: Page;
+    loading: boolean;
+    error?: string;
+  }>({ loading: true });
   const [verify, setVerify] = useState<{
     intact: boolean;
     checked: number;
@@ -78,51 +129,60 @@ export default function AuditPage() {
   } | null>(null);
   const orgWide = !active?.team_id;
 
-  const query = (before?: number) =>
-    [
-      `limit=${PAGE}`,
-      filters.action && `action=${encodeURIComponent(filters.action)}`,
-      filters.result && `result=${filters.result}`,
-      filters.team && `team_id=${filters.team}`,
-      before && `before=${before}`,
-    ]
-      .filter(Boolean)
-      .join("&");
+  // Search applies 300 ms after typing stops.
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setFilters((f) => (f.q === draft ? f : { ...f, q: draft })),
+      300
+    );
+    return () => window.clearTimeout(timer);
+  }, [draft]);
 
-  const load = async (before: number) => {
-    setState((s) => ({ ...s, loading: true, error: undefined }));
-    try {
-      const page = await api<Page>(`/audit?${query(before)}`);
-      setRows((current) => [...current, ...page.entries]);
-      setState({ loading: false, next: page.next_before });
-    } catch (err) {
-      setState((s) => ({ ...s, loading: false, error: errorText(err) }));
-    }
+  const change = (patch: Partial<typeof EMPTY>) => {
+    setFilters((f) => ({ ...f, ...patch }));
+    setPage(1);
+    setAsOf(null); // new filters: a fresh snapshot
   };
 
-  // Reload from the newest entry whenever a filter changes.
   useEffect(() => {
     let live = true;
-    api<Page>(`/audit?${query()}`).then(
-      (page) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      size: filters.size,
+      sort: filters.sort,
+    });
+    if (filters.q) params.set("q", filters.q);
+    if (filters.action) params.set("action", filters.action);
+    if (filters.result) params.set("result", filters.result);
+    if (filters.team) params.set("team_id", filters.team);
+    if (filters.from) params.set("from", new Date(filters.from).toISOString());
+    if (filters.to)
+      params.set(
+        "to",
+        new Date(new Date(filters.to).getTime() + 86400e3).toISOString()
+      ); // through the end of that day
+    if (asOf && page > 1) params.set("as_of", String(asOf));
+    setResult((r) => ({ ...r, loading: true, error: undefined }));
+    api<Page>(`/audit?${params}`).then(
+      (data) => {
         if (!live) return;
-        setRows(page.entries);
-        setState({ loading: false, next: page.next_before });
+        setResult({ data, loading: false });
+        if (page === 1) setAsOf(data.as_of);
       },
-      (err) =>
-        live && setState({ loading: false, next: null, error: errorText(err) })
+      (err) => live && setResult({ loading: false, error: errorText(err) })
     );
     return () => {
       live = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- query() is derived from filters
-  }, [filters]);
+    // asOf is set from page 1's answer and only read for later pages.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, page]);
 
   const runVerify = async () => {
     try {
       setVerify(await api("/audit/verify"));
     } catch (err) {
-      setState((s) => ({ ...s, error: errorText(err) }));
+      setResult((r) => ({ ...r, error: errorText(err) }));
     }
   };
 
@@ -130,6 +190,9 @@ export default function AuditPage() {
     id
       ? (teams.data?.find((t) => t.id === id)?.name ?? "deleted team")
       : "Organization";
+  const data = result.data;
+  const filtered =
+    JSON.stringify({ ...filters, q: draft }) !== JSON.stringify(EMPTY);
 
   return (
     <>
@@ -168,54 +231,122 @@ export default function AuditPage() {
         </div>
       )}
 
-      <Card className="mb-4 flex flex-wrap items-end gap-3 p-4">
-        <label className="grid gap-1 text-xs text-ink-3">
-          Action
-          <Select
-            className="h-10 w-56"
-            value={filters.action}
-            onChange={(e) => setFilters({ ...filters, action: e.target.value })}
-          >
-            {CATEGORIES.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          Result
-          <Select
-            className="h-10 w-40"
-            value={filters.result}
-            onChange={(e) => setFilters({ ...filters, result: e.target.value })}
-          >
-            <option value="">Any result</option>
-            <option value="allowed">Allowed</option>
-            <option value="denied">Denied</option>
-            <option value="failed">Failed</option>
-          </Select>
-        </label>
-        {orgWide && (
+      <Card className="mb-4 grid gap-3 p-4">
+        <div className="relative">
+          <Search
+            size={16}
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3"
+          />
+          <Input
+            type="search"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Search people, actions, details or IP addresses"
+            aria-label="Search the audit log"
+            // inline, not a class: Input's own px-4 would win a Tailwind class conflict (#29)
+            style={{ paddingLeft: "2.5rem" }}
+            maxLength={100}
+          />
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
           <label className="grid gap-1 text-xs text-ink-3">
-            Team
+            Action
             <Select
-              className="h-10 w-48"
-              value={filters.team}
-              onChange={(e) => setFilters({ ...filters, team: e.target.value })}
+              className="h-11 w-52"
+              value={filters.action}
+              onChange={(e) => change({ action: e.target.value })}
             >
-              <option value="">All teams</option>
-              {(teams.data ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
+              {CATEGORIES.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
                 </option>
               ))}
             </Select>
           </label>
-        )}
+          <label className="grid gap-1 text-xs text-ink-3">
+            Result
+            <Select
+              className="h-11 w-44"
+              value={filters.result}
+              onChange={(e) => change({ result: e.target.value })}
+            >
+              <option value="">Any result</option>
+              <option value="issues">Issues only</option>
+              <option value="denied">Denied</option>
+              <option value="failed">Failed</option>
+              <option value="allowed">Allowed</option>
+            </Select>
+          </label>
+          {orgWide && (
+            <label className="grid gap-1 text-xs text-ink-3">
+              Team
+              <Select
+                className="h-11 w-44"
+                value={filters.team}
+                onChange={(e) => change({ team: e.target.value })}
+              >
+                <option value="">All teams</option>
+                {(teams.data ?? []).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
+          <label className="grid w-40 gap-1 text-xs text-ink-3">
+            From
+            <Input
+              type="date"
+              value={filters.from}
+              onChange={(e) => change({ from: e.target.value })}
+            />
+          </label>
+          <label className="grid w-40 gap-1 text-xs text-ink-3">
+            To
+            <Input
+              type="date"
+              value={filters.to}
+              onChange={(e) => change({ to: e.target.value })}
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-ink-3">
+            Sort
+            <Select
+              className="h-11 w-40"
+              value={filters.sort}
+              onChange={(e) => change({ sort: e.target.value })}
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="issues">Issues first</option>
+            </Select>
+          </label>
+          {filtered && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setDraft("");
+                change(EMPTY);
+              }}
+            >
+              <X size={14} /> Clear
+            </Button>
+          )}
+        </div>
       </Card>
 
-      {state.error && <Notice>{state.error}</Notice>}
+      {result.error && <Notice>{result.error}</Notice>}
+
+      <div className="mb-2 flex items-center justify-between text-xs text-ink-3">
+        <span aria-live="polite">
+          {data
+            ? `${data.total.toLocaleString()} ${data.total === 1 ? "entry" : "entries"}`
+            : ""}
+        </span>
+        {result.loading && <Spinner />}
+      </div>
 
       <div className="overflow-x-auto rounded-2xl border border-white/10 bg-black">
         <table className="w-full min-w-[56rem] text-left text-sm">
@@ -230,8 +361,14 @@ export default function AuditPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((e) => (
-              <tr key={e.seq} className="border-b border-white/5 align-top">
+            {(data?.entries ?? []).map((e) => (
+              <tr
+                key={e.seq}
+                className={cx(
+                  "border-b border-white/5 align-top",
+                  e.result !== "allowed" && "bg-danger/[0.04]"
+                )}
+              >
                 <td className="px-4 py-2.5 whitespace-nowrap text-ink-2">
                   {new Date(e.at).toLocaleString("en-US", {
                     month: "short",
@@ -268,24 +405,71 @@ export default function AuditPage() {
             ))}
           </tbody>
         </table>
-        {!state.loading && !rows.length && (
+        {!result.loading && data && !data.entries.length && (
           <p className="p-8 text-center text-sm text-ink-3">
             No entries match these filters.
           </p>
         )}
       </div>
 
-      <div className="mt-4 flex justify-center">
-        {state.loading ? (
-          <Spinner />
-        ) : (
-          state.next !== null && (
-            <Button variant="ghost" onClick={() => load(state.next!)}>
-              Load older entries
-            </Button>
-          )
-        )}
-      </div>
+      {data && data.pages > 1 && (
+        <nav
+          aria-label="Audit log pages"
+          className="mt-4 flex flex-wrap items-center justify-between gap-3"
+        >
+          <label className="flex items-center gap-2 text-xs text-ink-3">
+            Per page
+            <Select
+              className="h-9 w-24"
+              value={filters.size}
+              onChange={(e) => change({ size: e.target.value })}
+            >
+              {["25", "50", "100", "200"].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <div className="flex items-center gap-1">
+            <IconButton
+              label="Previous page"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              <ChevronLeft size={16} />
+            </IconButton>
+            {pageList(page, data.pages).map((p, i) =>
+              p === "…" ? (
+                <span key={`gap-${i}`} className="px-1 text-ink-3">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPage(p as number)}
+                  aria-current={p === page ? "page" : undefined}
+                  className={cx(
+                    "h-9 min-w-9 rounded-lg px-2 text-sm transition",
+                    p === page
+                      ? "bg-ink font-semibold text-black"
+                      : "text-ink-2 hover:bg-glass-strong"
+                  )}
+                >
+                  {p}
+                </button>
+              )
+            )}
+            <IconButton
+              label="Next page"
+              disabled={page >= data.pages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              <ChevronRight size={16} />
+            </IconButton>
+          </div>
+        </nav>
+      )}
     </>
   );
 }

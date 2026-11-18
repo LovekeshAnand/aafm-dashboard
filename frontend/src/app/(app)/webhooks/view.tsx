@@ -32,9 +32,12 @@ import {
   type Delivery,
   type Project,
   type Team,
+  EVENT_LABEL,
+  FORMAT_NAME,
   type Webhook,
   WEBHOOK_EVENTS,
   type WebhookEvent,
+  type WebhookFormat,
 } from "@/lib/types";
 import { useSocketEvent } from "@/lib/realtime";
 import { useApi } from "@/lib/use-api";
@@ -56,6 +59,62 @@ const time = (iso: string) =>
     hour12: false,
   });
 
+// F5 (Prompt 68): set up by picking an app, not by reading a spec. Each chat app gets readable
+// messages in its own format; "Developer endpoint" keeps the signed Standard Webhooks JSON.
+const DESTINATIONS: {
+  format: WebhookFormat;
+  name: string;
+  hint: string;
+  how: string[];
+  help: string | null;
+  placeholder: string;
+}[] = [
+  {
+    format: "slack",
+    name: "Slack",
+    hint: "Messages in a Slack channel",
+    how: [
+      "In Slack, create an app (or open yours) and turn on Incoming Webhooks.",
+      "Choose Add New Webhook, pick the channel, then copy the link.",
+    ],
+    help: "https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks",
+    placeholder: "https://hooks.slack.com/services/…",
+  },
+  {
+    format: "teams",
+    name: "Microsoft Teams",
+    hint: "Messages in a Teams channel",
+    how: [
+      "In the channel, open More options (…) → Workflows.",
+      "Choose “Send webhook alerts to a channel”, save, then copy the link.",
+    ],
+    help: "https://support.microsoft.com/en-us/office/create-incoming-webhooks-with-workflows-for-microsoft-teams-8ae491c7-0394-4861-ba59-055e33f75498",
+    placeholder: "https://…/workflows/…",
+  },
+  {
+    format: "discord",
+    name: "Discord",
+    hint: "Messages in a Discord channel",
+    how: [
+      "Open the channel's settings → Integrations → Webhooks → New Webhook.",
+      "Choose Copy Webhook URL.",
+    ],
+    help: "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
+    placeholder: "https://discord.com/api/webhooks/…",
+  },
+  {
+    format: "standard",
+    name: "Developer endpoint",
+    hint: "Signed JSON for your own system",
+    how: [
+      "Any HTTPS address that accepts POST requests.",
+      "Each message is signed (Standard Webhooks); you'll get the secret to verify it.",
+    ],
+    help: "https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md",
+    placeholder: "https://example.com/hooks/aafm",
+  },
+];
+
 function WebhookForm({
   teams,
   projects,
@@ -65,9 +124,10 @@ function WebhookForm({
   teams?: Team[];
   projects: Project[];
   defaultTeam: string;
-  onCreated: (secret: string) => void;
+  onCreated: (created: Webhook & { secret: string }) => void;
 }) {
   const [form, setForm] = useState({
+    format: "slack" as WebhookFormat,
     team_id: defaultTeam,
     url: "",
     description: "",
@@ -75,6 +135,7 @@ function WebhookForm({
     events: ["alert.opened", "alert.resolved"] as WebhookEvent[],
   });
   const [error, setError] = useState("");
+  const destination = DESTINATIONS.find((d) => d.format === form.format)!;
   const toggle = (event: WebhookEvent) =>
     setForm({
       ...form,
@@ -86,80 +147,87 @@ function WebhookForm({
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      const created = await api<Webhook & { secret: string }>(
-        "/webhooks",
-        "POST",
-        {
+      onCreated(
+        await api<Webhook & { secret: string }>("/webhooks", "POST", {
           ...(teams && { team_id: form.team_id }),
-          url: form.url,
+          format: form.format,
+          url: form.url.trim(),
           description: form.description,
           project_id: form.project_id || null,
           events: form.events,
-        }
+        })
       );
-      onCreated(created.secret);
     } catch (err) {
       setError(errorText(err));
     }
   };
 
   return (
-    <form onSubmit={submit} className="grid gap-4">
-      {teams && (
-        <Field label="Team">
-          <Select
-            value={form.team_id}
-            onChange={(e) =>
-              setForm({ ...form, team_id: e.target.value, project_id: "" })
-            }
+    <form onSubmit={submit} className="grid gap-5">
+      <fieldset className="grid gap-2 text-sm">
+        <legend className="mb-1.5 text-ink-2">
+          1. Where should we send updates?
+        </legend>
+        <div className="grid grid-cols-2 gap-2">
+          {DESTINATIONS.map((d) => (
+            <button
+              key={d.format}
+              type="button"
+              onClick={() => setForm({ ...form, format: d.format })}
+              aria-pressed={form.format === d.format}
+              className={cx(
+                "rounded-xl border px-3 py-2.5 text-left transition",
+                form.format === d.format
+                  ? "border-accent/60 bg-accent/10"
+                  : "border-white/10 bg-black/30 hover:bg-glass-strong"
+              )}
+            >
+              <span className="block font-medium">{d.name}</span>
+              <span className="block text-xs text-ink-3">{d.hint}</span>
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="grid gap-2">
+        <span className="text-sm text-ink-2">
+          2. Paste the{" "}
+          {destination.format === "standard"
+            ? "address"
+            : `${destination.name} link`}
+        </span>
+        <ol className="list-decimal space-y-1 pl-5 text-xs text-ink-3">
+          {destination.how.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        {destination.help && (
+          <a
+            href={destination.help}
+            target="_blank"
+            rel="noreferrer"
+            className="w-fit text-xs text-accent hover:underline"
           >
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      )}
-      <Field
-        label="Endpoint URL"
-        hint="Receives a signed POST for each event (Standard Webhooks)."
-      >
+            How do I get this link?
+          </a>
+        )}
         <Input
           type="url"
           value={form.url}
           onChange={(e) => setForm({ ...form, url: e.target.value })}
           required
           maxLength={2000}
-          placeholder="https://example.com/hooks/aafm"
+          placeholder={destination.placeholder}
+          aria-label={`${destination.name} link`}
           autoFocus
         />
-      </Field>
-      <Field label="Description" hint="Optional">
-        <Input
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          maxLength={200}
-        />
-      </Field>
-      <Field label="Project">
-        <Select
-          value={form.project_id}
-          onChange={(e) => setForm({ ...form, project_id: e.target.value })}
-        >
-          <option value="">All projects in the team</option>
-          {projects
-            .filter((p) => p.team_id === form.team_id)
-            .map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-        </Select>
-      </Field>
+      </div>
+
       <fieldset className="grid gap-2 text-sm">
-        <legend className="mb-1.5 text-ink-2">Events</legend>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <legend className="mb-1.5 text-ink-2">
+          3. What should we tell you about?
+        </legend>
+        <div className="grid gap-2">
           {WEBHOOK_EVENTS.map((event) => (
             <label
               key={event}
@@ -171,14 +239,61 @@ function WebhookForm({
                 onChange={() => toggle(event)}
                 className="accent-[var(--color-accent)]"
               />
-              <code className="text-xs">{event}</code>
+              {EVENT_LABEL[event]}
             </label>
           ))}
         </div>
       </fieldset>
+
+      <details className="text-sm">
+        <summary className="cursor-pointer text-ink-2">More options</summary>
+        <div className="mt-3 grid gap-4">
+          {teams && (
+            <Field label="Team">
+              <Select
+                value={form.team_id}
+                onChange={(e) =>
+                  setForm({ ...form, team_id: e.target.value, project_id: "" })
+                }
+              >
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          <Field label="Only for one project">
+            <Select
+              value={form.project_id}
+              onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+            >
+              <option value="">All projects in the team</option>
+              {projects
+                .filter((p) => p.team_id === form.team_id)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          <Field label="Name" hint="Optional, e.g. #finance-alerts">
+            <Input
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+              maxLength={200}
+            />
+          </Field>
+        </div>
+      </details>
+
       <Notice>{error}</Notice>
       <Button type="submit" disabled={!form.events.length}>
-        Add endpoint
+        Connect {destination.name}
       </Button>
     </form>
   );
@@ -356,7 +471,13 @@ export default function WebhooksPage() {
                 <div className="flex flex-wrap items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <code className="truncate text-sm">{hook.url}</code>
+                      <span className="font-medium">
+                        {hook.description || FORMAT_NAME[hook.format]}
+                      </span>
+                      <Badge>{FORMAT_NAME[hook.format]}</Badge>
+                      <code className="truncate text-xs text-ink-3">
+                        {new URL(hook.url).host}
+                      </code>
                       <Badge tone={hook.enabled ? "accent" : "neutral"}>
                         {hook.enabled ? "Enabled" : "Disabled"}
                       </Badge>
@@ -371,11 +492,6 @@ export default function WebhooksPage() {
                         </span>
                       )}
                     </div>
-                    {hook.description && (
-                      <p className="mt-1 text-sm text-ink-2">
-                        {hook.description}
-                      </p>
-                    )}
                     <p className="mt-1 text-xs text-ink-3">
                       {orgWide && `${name(teams.data, hook.team_id)} · `}
                       {hook.project_id
@@ -391,7 +507,7 @@ export default function WebhooksPage() {
                     )}
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {hook.events.map((e) => (
-                        <Badge key={e}>{e}</Badge>
+                        <Badge key={e}>{EVENT_LABEL[e]}</Badge>
                       ))}
                     </div>
                   </div>
@@ -485,9 +601,16 @@ export default function WebhooksPage() {
           teams={orgWide ? (teams.data ?? []) : undefined}
           projects={projects.data ?? []}
           defaultTeam={active?.team_id ?? teams.data?.[0]?.id ?? ""}
-          onCreated={(value) => {
+          onCreated={(created) => {
             setCreating(false);
-            setSecret({ value, rotated: false });
+            // Only developer endpoints verify signatures; chat apps don't need the secret.
+            if (created.format === "standard")
+              setSecret({ value: created.secret, rotated: false });
+            else
+              setNotice({
+                tone: "success",
+                text: `Connected to ${FORMAT_NAME[created.format]}. Use the send button (paper plane) to post a test message.`,
+              });
             hooks.reload();
           }}
         />

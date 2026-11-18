@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* Dark "liquid glass" theme (frontend/assets/inspo). The app is dark-only by design. */
+/* "Liquid glass" theme (frontend/assets/inspo). Dark by default; light mode (Prompt 70) is the
+   `light` class on <html> (see the theme block below the @theme). */
 @theme {
   --color-canvas: #050806;
   --color-ink: #e9f2ec;
@@ -46,24 +47,74 @@
   }
 }
 
+/* Light mode (Prompt 70). Components use `bg-black` / `border-white/10` as "surface" and
+   "foreground line", so light mode swaps those two colors (Tailwind v4 reads them from these
+   variables) and every existing class flips consistently. Values checked for WCAG AA on the
+   light canvas: ink-3 #4a5a51 6.6:1, accent #2f6b4a 6.2:1, danger #c42727 5.5:1, warn #a14b06
+   5.6:1; the series green keeps >= 3:1 for graphics. */
 :root {
   color-scheme: dark;
+  --ambient-1: rgb(47 125 85 / 0.12);
+  --ambient-2: rgb(31 77 54 / 0.18);
+  --glass-tint: rgb(5 8 6 / 0.7);
+  --glass-sheen: rgb(255 255 255 / 0.08);
+  --glass-border: rgb(255 255 255 / 0.12);
+  --glass-highlight: rgb(255 255 255 / 0.14);
+  --glass-shadow: rgb(0 0 0 / 0.7);
 }
+.light {
+  color-scheme: light;
+  --color-canvas: #eef3f0;
+  --color-ink: #0f1a14;
+  --color-ink-2: #2e3d35;
+  --color-ink-3: #4a5a51;
+  --color-line: rgb(0 0 0 / 0.1);
+  --color-glass: rgb(0 0 0 / 0.035);
+  --color-glass-strong: rgb(0 0 0 / 0.06);
+  --color-accent: #2f6b4a;
+  --color-danger: #c42727;
+  --color-warn: #a14b06;
+  --color-white: #0f1a14;
+  --color-black: #ffffff;
+  --ambient-1: rgb(47 125 85 / 0.1);
+  --ambient-2: rgb(120 180 145 / 0.16);
+  --glass-tint: rgb(255 255 255 / 0.72);
+  --glass-sheen: rgb(255 255 255 / 0.5);
+  --glass-border: rgb(0 0 0 / 0.08);
+  --glass-highlight: rgb(255 255 255 / 0.8);
+  --glass-shadow: rgb(15 40 25 / 0.18);
+}
+/* Dark islands inside light mode: the sign-in screens' animated art and the dashboards hero
+   are designed dark, so they keep the dark values (copied from @theme and :root above). */
+.light .theme-dark {
+  color-scheme: dark;
+  color: #e9f2ec;
+  --color-canvas: #050806;
+  --color-ink: #e9f2ec;
+  --color-ink-2: #d3ded7;
+  --color-ink-3: #b8c6bd;
+  --color-line: rgb(255 255 255 / 0.09);
+  --color-glass: rgb(255 255 255 / 0.045);
+  --color-glass-strong: rgb(255 255 255 / 0.08);
+  --color-accent: #a8c5b3;
+  --color-danger: #f87171;
+  --color-warn: #fbbf24;
+  --color-white: #fff;
+  --color-black: #000;
+  --glass-tint: rgb(5 8 6 / 0.7);
+  --glass-sheen: rgb(255 255 255 / 0.08);
+  --glass-border: rgb(255 255 255 / 0.12);
+  --glass-highlight: rgb(255 255 255 / 0.14);
+  --glass-shadow: rgb(0 0 0 / 0.7);
+}
+@custom-variant light (&:where(.light, .light *));
 
 body {
   background-color: var(--color-canvas);
   /* Soft, low-saturation green ambience (no neon). */
   background-image:
-    radial-gradient(
-      60rem 40rem at 85% -10%,
-      rgb(47 125 85 / 0.12),
-      transparent 60%
-    ),
-    radial-gradient(
-      50rem 50rem at -10% 110%,
-      rgb(31 77 54 / 0.18),
-      transparent 60%
-    );
+    radial-gradient(60rem 40rem at 85% -10%, var(--ambient-1), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 110%, var(--ambient-2), transparent 60%);
   background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-sans), system-ui, sans-serif;
@@ -77,15 +128,15 @@ body {
   background:
     linear-gradient(
       160deg,
-      rgb(255 255 255 / 0.08),
-      rgb(255 255 255 / 0.02) 60%
+      var(--glass-sheen),
+      color-mix(in srgb, var(--glass-sheen) 25%, transparent) 60%
     ),
-    rgb(5 8 6 / 0.7);
-  border: 1px solid rgb(255 255 255 / 0.12);
+    var(--glass-tint);
+  border: 1px solid var(--glass-border);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.14),
-    inset 0 0 0 1px rgb(255 255 255 / 0.02),
-    0 24px 60px -24px rgb(0 0 0 / 0.7);
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-highlight) 14%, transparent),
+    0 24px 60px -24px var(--glass-shadow);
   backdrop-filter: blur(28px) saturate(160%);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
 }
@@ -106,10 +157,10 @@ body {
 
 /* react-grid-layout: placeholder + resize handle in theme colors */
 .react-grid-item.react-grid-placeholder {
-  background: rgb(255 255 255 / 0.08);
+  background: var(--color-glass-strong);
   border-radius: 1rem;
   opacity: 1;
 }
 .react-grid-item > .react-resizable-handle::after {
-  border-color: rgb(255 255 255 / 0.4);
+  border-color: var(--color-ink-3);
 }

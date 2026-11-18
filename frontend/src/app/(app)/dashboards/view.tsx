@@ -3,13 +3,12 @@
 import { Plus } from "lucide-react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { type FormEvent, useRef, useState } from "react";
-import { StatTile } from "@/components/charts";
+import { type FormEvent, useCallback, useRef, useState } from "react";
 import { DashboardBoard } from "@/components/dashboard-board";
+import { TrendCard } from "@/components/trend-card";
 import { useSession } from "@/components/session";
 import {
   Button,
-  Card,
   cx,
   Field,
   Input,
@@ -132,12 +131,21 @@ function CreateDashboard({
 
 /**
  * Dashboard home (Prompt 27): banner and totals, then the selected dashboard itself.
- * With several dashboards a pill switcher appears at the top of the board; `selectedId`
- * comes from /dashboards/<id> so a switch is also a shareable deep link.
+ * The dashboards are folder tabs on top of the board (Prompt 71); `selectedId` comes from
+ * /dashboards/<id> so a switch is also a shareable deep link.
  * Tier 3 A: `?project=<id>` scopes the totals and the switcher to one project; without it
  * they cover all of the team's projects.
  */
 const LIST_LIMIT = 100;
+const TAB_MIN = 120; // px: below this a tab name is unreadable, so it moves into "More"
+const MORE_WIDTH = 120;
+const lastDay = () => {
+  const to = new Date();
+  return {
+    from: new Date(to.getTime() - 24 * 3600e3).toISOString(),
+    to: to.toISOString(),
+  };
+};
 
 export function DashboardsHome({ selectedId }: { selectedId?: string }) {
   const router = useRouter();
@@ -153,15 +161,29 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
     `/metrics/summary?range=24h${project ? `&project_id=${project}` : ""}`
   );
   const [creating, setCreating] = useState(false);
+  // Width of the tab row, to decide how many tabs fit (Prompt 72). A callback ref, so it
+  // attaches whenever the row mounts (React 19 runs the returned cleanup on unmount).
+  const [rowWidth, setRowWidth] = useState(1200);
+  const rowRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setRowWidth(entry.contentRect.width)
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   // Tier 2: totals follow live ticks; the switcher follows dashboards that teammates create,
   // rename or delete (and Tier 3 A: projects being added, renamed or removed).
   // The cards show 24-hour totals: refreshing every 30 s is plenty (problems-log #29).
   const lastSummary = useRef(0);
+  const [day, setDay] = useState(lastDay);
   useSocketEvent("metrics:tick", () => {
     if (Date.now() - lastSummary.current < 30_000) return;
     lastSummary.current = Date.now();
     summary.reload();
+    setDay(lastDay());
   });
+  const seriesQuery = `from=${day.from}&to=${day.to}&bucket=1h${project ? `&project_id=${project}` : ""}`;
   useSocketEvent("dashboards:changed", () => dashboards.reload());
   useSocketEvent("projects:changed", () => projects.reload());
   const canEdit = !!active && EDITORS.includes(active.role);
@@ -222,39 +244,88 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
     </div>
   );
 
-  const switcher = tabs.length > 1 && (
+  // Prompt 72: no sideways scrolling. Tabs share the row like browser tabs (names truncate,
+  // full name on hover); those that don't fit at TAB_MIN go into a native "More" menu. The
+  // selected dashboard always keeps a visible tab.
+  const fit = Math.max(
+    1,
+    Math.floor((rowWidth - (canEdit ? 48 : 0)) / TAB_MIN)
+  );
+  const overflowing = tabs.length > fit;
+  const slots = overflowing
+    ? Math.max(
+        1,
+        Math.floor((rowWidth - (canEdit ? 48 : 0) - MORE_WIDTH) / TAB_MIN)
+      )
+    : tabs.length;
+  let shown = tabs.slice(0, slots);
+  const chosen = tabs.find((d) => d.id === boardId);
+  if (chosen && !shown.includes(chosen))
+    shown = [...shown.slice(0, -1), chosen];
+  const hidden = tabs.filter((d) => !shown.includes(d));
+  const firstSelected = shown[0]?.id === boardId;
+  const open = (id: string) => router.push(withProject(`/dashboards/${id}`));
+  const folderTabs = (
     <div
+      ref={rowRef}
       role="tablist"
       aria-label="Dashboards"
-      className="flex max-w-full overflow-x-auto rounded-xl border border-white/10 bg-black p-1"
+      className="relative z-10 -mb-px flex min-w-0 items-end gap-1"
     >
-      {tabs.map((d) => (
-        <button
-          key={d.id}
-          role="tab"
-          aria-selected={d.id === boardId}
-          onClick={() => router.push(withProject(`/dashboards/${d.id}`))}
-          className={cx(
-            "shrink-0 rounded-lg px-4 py-2 text-sm whitespace-nowrap transition",
-            d.id === boardId
-              ? "bg-ink font-semibold text-black"
-              : "text-ink-2 hover:text-ink"
-          )}
+      {shown.map((d) => {
+        const selected = d.id === boardId;
+        const where = !project
+          ? `${orgWide ? `${teamName(d.team_id)} · ` : ""}${projectName(d.project_id)}`
+          : "";
+        return (
+          <button
+            key={d.id}
+            role="tab"
+            aria-selected={selected}
+            title={where ? `${d.name} (${where})` : d.name}
+            onClick={() => open(d.id)}
+            className={cx(
+              "flex max-w-60 min-w-0 flex-1 items-baseline gap-2 rounded-t-xl border border-b-0 px-4 text-left text-sm transition",
+              selected
+                ? "border-line bg-canvas py-3 font-semibold text-ink"
+                : "border-transparent py-2.5 text-ink-3 hover:bg-glass-strong hover:text-ink"
+            )}
+          >
+            <span className="truncate">{d.name}</span>
+            {where && (
+              <span className="hidden truncate text-xs font-normal text-ink-3 xl:inline">
+                {where}
+              </span>
+            )}
+          </button>
+        );
+      })}
+      {hidden.length > 0 && (
+        <select
+          aria-label="More dashboards"
+          value=""
+          onChange={(e) => e.target.value && open(e.target.value)}
+          className="mb-1 h-8 shrink-0 cursor-pointer rounded-lg border border-line bg-canvas px-2 text-sm text-ink-2 hover:text-ink"
+          style={{ width: MORE_WIDTH - 8 }}
         >
-          {d.name}
-          {!project && (
-            <span
-              className={cx(
-                "ml-2 text-xs",
-                d.id === boardId ? "text-black/60" : "text-ink-3"
-              )}
-            >
-              {orgWide && `${teamName(d.team_id)} · `}
-              {projectName(d.project_id)}
-            </span>
-          )}
+          <option value="">More ({hidden.length})</option>
+          {hidden.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {canEdit && (
+        <button
+          onClick={() => setCreating(true)}
+          aria-label="New dashboard"
+          title="New dashboard"
+          className="mb-1 ml-1 grid size-8 shrink-0 place-items-center rounded-lg text-ink-3 transition hover:bg-glass-strong hover:text-ink"
+        >
+          <Plus size={16} />
         </button>
-      ))}
+      )}
     </div>
   );
 
@@ -264,7 +335,7 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
           is blended with `screen` so its own black backdrop merges into the panel. The image
           box has the render's exact aspect ratio (952x736) so the radial fade follows the
           image and no hard frame edge shows. */}
-      <section className="relative mb-6 overflow-hidden rounded-2xl border border-[#3b7a57]/30 bg-black bg-[radial-gradient(45%_110%_at_80%_50%,rgb(31_92_60/0.55),transparent_70%),radial-gradient(40%_90%_at_0%_0%,rgb(47_125_85/0.22),transparent_70%)] shadow-[inset_0_1px_0_rgb(255_255_255/0.06),0_30px_80px_-30px_rgb(15_51_35/0.9)]">
+      <section className="theme-dark relative mb-6 overflow-hidden rounded-2xl border border-[#3b7a57]/30 bg-black bg-[radial-gradient(45%_110%_at_80%_50%,rgb(31_92_60/0.55),transparent_70%),radial-gradient(40%_90%_at_0%_0%,rgb(47_125_85/0.22),transparent_70%)] shadow-[inset_0_1px_0_rgb(255_255_255/0.06),0_30px_80px_-30px_rgb(15_51_35/0.9)]">
         <div
           aria-hidden
           className="absolute top-1/2 right-[4%] hidden aspect-[952/736] h-[125%] -translate-y-1/2 mix-blend-screen [mask-image:radial-gradient(closest-side,black_60%,transparent)] sm:block"
@@ -309,41 +380,31 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
 
       {projectPicker}
 
-      {/* Five base metrics plus ARPU (Tier 2 C): 3x2 at most, six in a row squeezed (Prompt 42). */}
+      {/* Five base metrics plus ARPU (Tier 2 C): 3x2 at most, six in a row squeezed (Prompt 42).
+          Prompt 71: each card carries its 24 h trend, tinted green (good) or red (bad). */}
       <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {(summary.data?.metrics ?? []).map((row) => (
-          <Card key={row.metric} className="h-36 p-5">
-            <div className="text-sm text-ink-2">{METRIC_LABEL[row.metric]}</div>
-            <div className="h-[calc(100%-1.25rem)]">
-              <StatTile
-                source={{ metric: row.metric }}
-                current={row.current}
-                previous={row.previous}
-              />
-            </div>
-          </Card>
+          <TrendCard
+            key={row.metric}
+            label={METRIC_LABEL[row.metric]}
+            source={{ metric: row.metric }}
+            current={row.current}
+            previous={row.previous}
+            seriesPath={`/metrics/series?metric=${row.metric}&${seriesQuery}`}
+          />
         ))}
         {summary.data?.kpis
           .filter((k) => k.kpi === "arpu")
           .map((k) => (
-            <Card key={k.kpi} className="h-36 p-5">
-              <div
-                className="truncate text-sm text-ink-2"
-                title={KPI_FORMULA[k.kpi]}
-              >
-                {KPI_LABEL[k.kpi]}{" "}
-                <span className="text-xs text-ink-3">
-                  · {KPI_FORMULA[k.kpi]}
-                </span>
-              </div>
-              <div className="h-[calc(100%-1.25rem)]">
-                <StatTile
-                  source={{ kpi: k.kpi }}
-                  current={k.current}
-                  previous={k.previous}
-                />
-              </div>
-            </Card>
+            <TrendCard
+              key={k.kpi}
+              label={KPI_LABEL[k.kpi]}
+              hint={KPI_FORMULA[k.kpi]}
+              source={{ kpi: k.kpi }}
+              current={k.current}
+              previous={k.previous}
+              seriesPath={`/metrics/kpi?kpi=${k.kpi}&${seriesQuery}`}
+            />
           ))}
       </div>
 
@@ -377,12 +438,20 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
               </Notice>
             </div>
           )}
-          <DashboardBoard
-            key={boardId}
-            id={boardId}
-            switcher={switcher || undefined}
-            onChanged={dashboards.reload}
-          />
+          {folderTabs}
+          <div
+            className={cx(
+              "rounded-2xl border border-line bg-canvas p-4 lg:p-5",
+              firstSelected && "rounded-tl-none"
+            )}
+          >
+            <DashboardBoard
+              key={boardId}
+              id={boardId}
+              switcher={null}
+              onChanged={dashboards.reload}
+            />
+          </div>
         </>
       )}
 

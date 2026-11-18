@@ -13,7 +13,7 @@ const listSchema = z.object({ team_id: z.uuid().optional() });
 const createSchema = z.strictObject({ name, team_id: z.uuid().optional() });
 const renameSchema = z.strictObject({ name });
 
-const COLUMNS = "id, team_id, name, created_at";
+const COLUMNS = "id, team_id, name, created_at, completed_at";
 const publish = (req, teamId, kind, projectId) =>
   publishTeamEvent(req.auth.org_id, teamId, "projects:changed", {
     kind,
@@ -65,10 +65,10 @@ const renameProject = asyncHandler(async (req, res) => {
     const {
       rows: [row],
     } = await db.query(
-      `UPDATE projects SET name = $2 WHERE id = $1 RETURNING ${COLUMNS}`,
+      `UPDATE projects SET name = $2 WHERE id = $1 AND completed_at IS NULL RETURNING ${COLUMNS}`,
       [req.params.id, body.name]
     );
-    if (!row) throw new ApiError(404, "Not found");
+    if (!row) throw await missingOrCompleted(db, req.params.id);
     await audit(db, req, "project.rename", {
       type: "project",
       id: row.id,
@@ -81,6 +81,17 @@ const renameProject = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, project, "Project renamed"));
 });
 
+// F1: a completed project keeps its history, so it can't be renamed or deleted until reopened.
+const missingOrCompleted = async (db, id) => {
+  const { rowCount } = await db.query(
+    "SELECT 1 FROM projects WHERE id = $1 AND completed_at IS NOT NULL",
+    [id]
+  );
+  return rowCount
+    ? new ApiError(409, "This project is completed. Reopen it first.")
+    : new ApiError(404, "Not found");
+};
+
 // Deleting a project deletes its dashboards, data and alerts (FK cascade); a team always keeps
 // at least one project.
 const deleteProject = asyncHandler(async (req, res) => {
@@ -88,10 +99,10 @@ const deleteProject = asyncHandler(async (req, res) => {
     const {
       rows: [row],
     } = await db.query(
-      "DELETE FROM projects WHERE id = $1 RETURNING id, team_id, name",
+      "DELETE FROM projects WHERE id = $1 AND completed_at IS NULL RETURNING id, team_id, name",
       [req.params.id]
     );
-    if (!row) throw new ApiError(404, "Not found");
+    if (!row) throw await missingOrCompleted(db, req.params.id);
     const { rowCount } = await db.query(
       "SELECT 1 FROM projects WHERE team_id = $1",
       [row.team_id]
@@ -110,4 +121,67 @@ const deleteProject = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, null, "Project deleted"));
 });
 
-export { createProject, deleteProject, listProjects, renameProject };
+// F1 (Prompts 68-69): Completed freezes the project (migration 018): live data stops, history
+// is kept, dashboards are read-only and open alerts close. Reopening resumes live data.
+const setCompleted = (completed) =>
+  asyncHandler(async (req, res) => {
+    const project = await req.db(async (db) => {
+      const {
+        rows: [row],
+      } = await db.query(
+        `UPDATE projects
+         SET completed_at = CASE WHEN $2 THEN now() END,
+             completed_by = CASE WHEN $2 THEN app.current_user_id() END
+         WHERE id = $1 AND (completed_at IS NULL) = $2
+         RETURNING ${COLUMNS}`,
+        [req.params.id, completed]
+      );
+      if (!row) {
+        const { rowCount } = await db.query(
+          "SELECT 1 FROM projects WHERE id = $1",
+          [req.params.id]
+        );
+        if (!rowCount) throw new ApiError(404, "Not found");
+        throw new ApiError(
+          409,
+          completed ? "Already completed" : "This project isn't completed"
+        );
+      }
+      await audit(db, req, completed ? "project.complete" : "project.reopen", {
+        type: "project",
+        id: row.id,
+        teamId: row.team_id,
+        meta: { name: row.name },
+      });
+      return row;
+    });
+    publish(
+      req,
+      project.team_id,
+      completed ? "completed" : "reopened",
+      project.id
+    );
+    // Completing closed the project's open alerts.
+    if (completed)
+      publishTeamEvent(req.auth.org_id, project.team_id, "alerts:changed", {
+        project_id: project.id,
+      });
+    res.json(
+      new ApiResponse(
+        200,
+        project,
+        completed ? "Project completed" : "Project reopened"
+      )
+    );
+  });
+const completeProject = setCompleted(true);
+const reopenProject = setCompleted(false);
+
+export {
+  completeProject,
+  createProject,
+  deleteProject,
+  listProjects,
+  renameProject,
+  reopenProject,
+};

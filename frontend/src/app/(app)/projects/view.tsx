@@ -1,6 +1,13 @@
 "use client";
 
-import { FolderKanban, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  CircleCheck,
+  FolderKanban,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 import { PageHeader } from "@/components/page-header";
@@ -104,6 +111,27 @@ export default function ProjectsPage() {
     }
   };
 
+  // F1: Completed freezes a project (read-only, live data stops, history kept); reopen undoes it.
+  const setCompleted = async (project: Project, complete: boolean) => {
+    if (
+      complete &&
+      !confirm(
+        `Mark "${project.name}" as completed? Its dashboards become read-only and live data stops. The history is kept, and you can reopen it later.`
+      )
+    )
+      return;
+    try {
+      await api(
+        `/projects/${project.id}/${complete ? "complete" : "reopen"}`,
+        "POST"
+      );
+      setNotice("");
+      projects.reload();
+    } catch (err) {
+      setNotice(errorText(err));
+    }
+  };
+
   if (projects.loading) return <Spinner />;
   const byTeam = (teams.data ?? [])
     .map((team) => ({
@@ -159,15 +187,38 @@ export default function ProjectsPage() {
                       >
                         {project.name}
                       </Link>
-                      <div className="mt-1.5">
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
                         <Badge>
                           {boards.length} dashboard
                           {boards.length === 1 ? "" : "s"}
                         </Badge>
+                        {project.completed_at && (
+                          <Badge tone="accent">
+                            Completed{" "}
+                            {new Date(project.completed_at).toLocaleDateString(
+                              "en-US",
+                              { month: "short", day: "numeric" }
+                            )}
+                          </Badge>
+                        )}
                       </div>
                     </div>
-                    {canManage && (
+                    {canManage && project.completed_at && (
+                      <IconButton
+                        label={`Reopen ${project.name}`}
+                        onClick={() => setCompleted(project, false)}
+                      >
+                        <RotateCcw size={15} />
+                      </IconButton>
+                    )}
+                    {canManage && !project.completed_at && (
                       <div className="flex">
+                        <IconButton
+                          label={`Mark ${project.name} as completed`}
+                          onClick={() => setCompleted(project, true)}
+                        >
+                          <CircleCheck size={15} />
+                        </IconButton>
                         <IconButton
                           label={`Rename ${project.name}`}
                           onClick={() => setModal({ kind: "rename", project })}

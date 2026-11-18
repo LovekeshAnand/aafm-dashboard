@@ -40,6 +40,7 @@ export type Project = {
   team_id: string;
   name: string;
   created_at: string;
+  completed_at: string | null;
 };
 
 export type Dashboard = {
@@ -266,11 +267,29 @@ export const WEBHOOK_EVENTS = [
   "member.removed",
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+/** F5 (Prompt 68): events in everyday words. */
+export const EVENT_LABEL: Record<WebhookEvent, string> = {
+  "alert.opened": "Something unusual happens (an alert)",
+  "alert.resolved": "Things are back to normal",
+  "dashboard.created": "A dashboard is created",
+  "dashboard.updated": "A dashboard is changed",
+  "dashboard.deleted": "A dashboard is deleted",
+  "member.added": "Someone joins the team",
+  "member.removed": "Someone leaves the team",
+};
+export type WebhookFormat = "standard" | "slack" | "discord" | "teams";
+export const FORMAT_NAME: Record<WebhookFormat, string> = {
+  standard: "Developer endpoint",
+  slack: "Slack",
+  discord: "Discord",
+  teams: "Microsoft Teams",
+};
 export type Webhook = {
   id: string;
   team_id: string;
   project_id: string | null;
   url: string;
+  format: WebhookFormat;
   description: string;
   events: WebhookEvent[];
   enabled: boolean;

@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil, Plus, Sigma, Trash2 } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { SeriesChart } from "@/components/charts";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session";
@@ -21,6 +21,8 @@ import { api, ApiError, errorText } from "@/lib/api";
 import {
   type CustomMetric,
   EDITORS,
+  type Kpi,
+  KPI_LABEL,
   METRIC_LABEL,
   type MetricUnit,
   type Point,
@@ -28,6 +30,16 @@ import {
   UNIT_LABEL,
 } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
+
+// F2 (Prompt 68): reuse what exists. KPIs insert as their expression (the same ratio the KPI
+// widgets compute); a saved custom metric inserts as its formula in parentheses. The parser
+// knows only base metrics, so inlining avoids chains between metrics, but a later edit to the
+// source metric doesn't flow into metrics built from it.
+const KPI_EXPRESSION: Record<Kpi, string> = {
+  arpu: "revenue / users",
+  ctr: "clicks / page_views",
+  error_rate: "errors / page_views",
+};
 
 const EXAMPLES = [
   "revenue / users",
@@ -83,11 +95,13 @@ function MetricForm({
   initial,
   teams,
   defaultTeam,
+  existing,
   onSaved,
 }: {
   initial?: CustomMetric;
   teams?: Team[];
   defaultTeam: string;
+  existing: CustomMetric[];
   onSaved: () => void;
 }) {
   const [form, setForm] = useState({
@@ -98,6 +112,27 @@ function MetricForm({
   });
   const [error, setError] = useState("");
   const preview = useFormulaPreview(form.formula, form.team_id);
+  const formulaInput = useRef<HTMLInputElement>(null);
+  const reusable = existing.filter(
+    (m) => m.team_id === form.team_id && m.id !== initial?.id
+  );
+  // Insert at the cursor (or replace the selection), with spaces around it.
+  const insert = (text: string) => {
+    const el = formulaInput.current;
+    const start = el?.selectionStart ?? form.formula.length;
+    const end = el?.selectionEnd ?? start;
+    const before = form.formula.slice(0, start).trimEnd();
+    const after = form.formula.slice(end).trimStart();
+    const formula = [before, text, after].filter(Boolean).join(" ");
+    setForm({ ...form, formula });
+    const caret = (before ? before.length + 1 : 0) + text.length;
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
+  };
+  const chip =
+    "rounded-full border border-white/10 px-2.5 py-0.5 text-ink-2 hover:border-accent/50 hover:text-ink";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -149,6 +184,7 @@ function MetricForm({
         hint={`Use ${Object.keys(METRIC_LABEL).join(", ")}, numbers, + - * / and parentheses. Each value is computed from the totals of its time bucket.`}
       >
         <Input
+          ref={formulaInput}
           value={form.formula}
           onChange={(e) => setForm({ ...form, formula: e.target.value })}
           required
@@ -159,18 +195,65 @@ function MetricForm({
           aria-invalid={!!preview.error}
         />
       </Field>
-      <div className="flex flex-wrap gap-2 text-xs text-ink-3">
-        Try:
-        {EXAMPLES.map((example) => (
-          <button
-            key={example}
-            type="button"
-            onClick={() => setForm({ ...form, formula: example })}
-            className="rounded-full border border-white/10 px-2.5 py-0.5 font-mono text-ink-2 hover:text-ink"
-          >
-            {example}
-          </button>
-        ))}
+      <div className="grid gap-2 text-xs text-ink-3">
+        <p>Click to add to the formula:</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-16">Metrics</span>
+          {Object.entries(METRIC_LABEL).map(([name, label]) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => insert(name)}
+              className={chip}
+              title={label}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-16">KPIs</span>
+          {(Object.keys(KPI_EXPRESSION) as Kpi[]).map((kpi) => (
+            <button
+              key={kpi}
+              type="button"
+              onClick={() => insert(`(${KPI_EXPRESSION[kpi]})`)}
+              className={chip}
+              title={KPI_EXPRESSION[kpi]}
+            >
+              {KPI_LABEL[kpi]}
+            </button>
+          ))}
+        </div>
+        {reusable.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-16">Saved</span>
+            {reusable.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => insert(`(${m.formula})`)}
+                className={chip}
+                title={m.formula}
+              >
+                {m.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-16">Examples</span>
+          {EXAMPLES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              onClick={() => setForm({ ...form, formula: example })}
+              className={`${chip} font-mono`}
+            >
+              {example}
+            </button>
+          ))}
+        </div>
       </div>
       <Field label="Shown as">
         <Select
@@ -330,6 +413,7 @@ export default function CustomMetricsPage() {
             initial={modal.kind === "edit" ? modal.metric : undefined}
             teams={orgWide ? (teams.data ?? []) : undefined}
             defaultTeam={active?.team_id ?? teams.data?.[0]?.id ?? ""}
+            existing={metrics.data ?? []}
             onSaved={() => {
               setModal(null);
               metrics.reload();

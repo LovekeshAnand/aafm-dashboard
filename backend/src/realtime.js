@@ -247,6 +247,12 @@ const publishTeamEvent = (orgId, teamId, event, payload) => {
  * - `{ userId, exceptToken }`: every session of the user except one (password change keeps
  *   the current session; reset revokes all of them).
  */
+/** Every open tab of one user (F3: notifications reach all of them at once). */
+const publishUserEvent = (userId, event, payload) => {
+  if (!io) return;
+  io.to(userRoom(userId)).emit(event, payload);
+};
+
 const closeSockets = ({ token, userId, exceptToken }) => {
   if (!io) return;
   if (token) return io.in(sessionRoom(token)).disconnectSockets(true);
@@ -263,4 +269,5 @@ export {
   initRealtime,
   publishDashboardChange,
   publishTeamEvent,
+  publishUserEvent,
 };

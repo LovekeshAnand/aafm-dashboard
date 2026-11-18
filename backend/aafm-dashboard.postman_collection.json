@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "AAFM Dashboard API (Tiers 1-3)",
+    "name": "AAFM Dashboard API (Tiers 1-3 + features)",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Multi-tenant analytics dashboard API: Org → Team hierarchy, RLS isolation, server-side sessions; Tier 2 adds active users, KPIs (ARPU, CTR, error rate) and anomaly alerts; Tier 3 adds projects (Org → Team → Project), custom metric formulas, the audit log and signed webhooks. Real-time (Socket.IO) and webhook delivery to a live receiver are covered by backend/test/realtime.test.js, tier2.test.js and tier3.test.js, since Postman collections cannot drive Socket.IO.\n\n**Setup**\n1. `npm run migrate && npm run seed && npm run dev` in `backend/`.\n2. The suite signs in ~13 times; the default auth rate limit is 10 per 15 min per IP, so set `AUTH_RATE_LIMIT=100` in `backend/.env` for local runs.\n3. Run the whole collection in order with the Collection Runner (folders build on each other's saved variables).\n\n**How auth works here**: the session is an HttpOnly cookie that Postman's cookie jar keeps automatically. Each `Sign in` request switches the active user. Every write sends `X-Requested-With` (CSRF guard); requests in `09 Security checks` omit it on purpose.\n\nSeed users (org `acme`, password `Password@123`): super@ (Super Admin), alice@ (Finance admin + Marketing viewer), bob@ (Finance editor), carol@ (Marketing viewer), dave@ (Marketing admin)."
+    "description": "Multi-tenant analytics dashboard API: Org → Team hierarchy, RLS isolation, server-side sessions; Tier 2 adds active users, KPIs (ARPU, CTR, error rate) and anomaly alerts; Tier 3 adds projects (Org → Team → Project), custom metric formulas, the audit log and signed webhooks; folder 10 covers notifications, audit search, chat-app webhooks, shared-data requests and completed projects. Real-time (Socket.IO) and webhook delivery to a live receiver are covered by backend/test/realtime.test.js, tier2.test.js and tier3.test.js, since Postman collections cannot drive Socket.IO.\n\n**Setup**\n1. `npm run migrate && npm run seed && npm run dev` in `backend/`.\n2. The suite signs in ~13 times; the default auth rate limit is 10 per 15 min per IP, so set `AUTH_RATE_LIMIT=100` in `backend/.env` for local runs.\n3. Run the whole collection in order with the Collection Runner (folders build on each other's saved variables).\n\n**How auth works here**: the session is an HttpOnly cookie that Postman's cookie jar keeps automatically. Each `Sign in` request switches the active user. Every write sends `X-Requested-With` (CSRF guard); requests in `09 Security checks` omit it on purpose.\n\nSeed users (org `acme`, password `Password@123`): super@ (Super Admin), alice@ (Finance admin + Marketing viewer), bob@ (Finance editor), carol@ (Marketing viewer), dave@ (Marketing admin)."
   },
   "variable": [
     {
@@ -16,6 +16,26 @@
     {
       "key": "password",
       "value": "Password@123"
+    },
+    {
+      "key": "accessRequestId",
+      "value": ""
+    },
+    {
+      "key": "slackHookId",
+      "value": ""
+    },
+    {
+      "key": "doneProjectId",
+      "value": ""
+    },
+    {
+      "key": "from",
+      "value": ""
+    },
+    {
+      "key": "to",
+      "value": ""
     }
   ],
   "item": [
@@ -2133,7 +2153,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/audit?limit=50"
+            "url": "{{baseUrl}}/api/v1/audit?size=50"
           }
         },
         {
@@ -2854,6 +2874,902 @@
               }
             ],
             "url": "{{baseUrl}}/api/v1/dashboards/{{dashboardId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 Features: notifications, audit search, chat webhooks, shared data, completed projects",
+      "item": [
+        {
+          "name": "Sign in: Carol (Marketing viewer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"org\": \"{{org}}\",\n  \"email\": \"carol@acme.test\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Notifications: list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test(\"items and unread count\", () => { pm.expect(d.items).to.be.an(\"array\"); pm.expect(d.unread).to.be.a(\"number\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications"
+          }
+        },
+        {
+          "name": "Notifications: mark all read",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/notifications/read",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared data: team directory (names only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const finance = pm.response.json().data.find((t) => t.name === \"Finance\");",
+                  "pm.test(\"lists Finance\", () => pm.expect(finance).to.be.an(\"object\"));",
+                  "pm.test(\"names only\", () => pm.expect(Object.keys(finance).sort()).to.eql([\"id\", \"name\"]));",
+                  "pm.collectionVariables.set(\"financeTeamId\", finance.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/teams/directory"
+          }
+        },
+        {
+          "name": "Shared data: ask for ARPU of Finance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"accessRequestId\", pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/access-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"team_id\": \"{{financeTeamId}}\",\n  \"kind\": \"kpi\",\n  \"source\": \"arpu\",\n  \"reason\": \"Postman: comparing ARPU\",\n  \"days\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared data: ask again while pending (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/access-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"team_id\": \"{{financeTeamId}}\",\n  \"kind\": \"kpi\",\n  \"source\": \"arpu\",\n  \"reason\": \"again\",\n  \"days\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared data: read before approval (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/shared/{{accessRequestId}}/summary"
+          }
+        },
+        {
+          "name": "Shared data: Carol can't approve her own (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/access-requests/{{accessRequestId}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approve\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sign in: Alice (Finance admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"org\": \"{{org}}\",\n  \"email\": \"alice@acme.test\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Select context: Finance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/context",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membership_id\": \"{{aliceFinanceMembershipId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared data: Finance admin's inbox",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json().data.find((x) => x.id === pm.collectionVariables.get(\"accessRequestId\"));",
+                  "pm.test(\"request is there, pending\", () => pm.expect(r.status).to.eql(\"pending\"));",
+                  "pm.test(\"requester named\", () => pm.expect(r.requester_name).to.eql(\"Carol Viewer\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/access-requests?box=incoming"
+          }
+        },
+        {
+          "name": "Shared data: approve for 1 day",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"approved with expiry\", () => { const d = pm.response.json().data; pm.expect(d.status).to.eql(\"approved\"); pm.expect(d.expires_at).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/access-requests/{{accessRequestId}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approve\": true,\n  \"days\": 1,\n  \"note\": \"OK for this week\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sign in: Carol (Marketing viewer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"org\": \"{{org}}\",\n  \"email\": \"carol@acme.test\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared data: ARPU summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"a value\", () => pm.expect(pm.response.json().data.current).to.be.a(\"number\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/shared/{{accessRequestId}}/summary?range=24h"
+          }
+        },
+        {
+          "name": "Shared data: ARPU series",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"to\", new Date().toISOString());",
+                  "pm.collectionVariables.set(\"from\", new Date(Date.now() - 24 * 3600e3).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"hourly points, value only\", () => { const p = pm.response.json().data.points; pm.expect(p.length).to.be.above(0); pm.expect(Object.keys(p[0]).sort()).to.eql([\"t\", \"value\"]); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/shared/{{accessRequestId}}/series?from={{from}}&to={{to}}&bucket=1h"
+          }
+        },
+        {
+          "name": "Shared data: raw Finance revenue stays hidden",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"no points\", () => pm.expect(pm.response.json().data.points.length).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/metrics/series?metric=revenue&from={{from}}&to={{to}}&bucket=1h&team_id={{financeTeamId}}"
+          }
+        },
+        {
+          "name": "Notifications: the approval arrived",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"approved notice\", () => pm.expect(pm.response.json().data.items[0].kind).to.eql(\"access_approved\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications"
+          }
+        },
+        {
+          "name": "Sign in: Alice (Finance admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"org\": \"{{org}}\",\n  \"email\": \"alice@acme.test\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Select context: Finance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/context",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membership_id\": \"{{aliceFinanceMembershipId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared data: end access now",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/access-requests/{{accessRequestId}}/revoke",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Audit: search, issues first, paged",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test(\"paged\", () => { pm.expect(d.size).to.eql(10); pm.expect(d.total).to.be.a(\"number\"); pm.expect(d.as_of).to.be.ok; });",
+                  "pm.test(\"found the access actions\", () => pm.expect(d.entries.some((e) => e.action.startsWith(\"access.\"))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/audit?q=access&sort=issues&size=10&page=1"
+          }
+        },
+        {
+          "name": "Audit: only issues",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"denied or failed only\", () => pm.expect(pm.response.json().data.entries.every((e) => e.result !== \"allowed\")).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/audit?result=issues&size=10"
+          }
+        },
+        {
+          "name": "Webhook: Slack format with a non-Slack link (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"clear reason\", () => pm.expect(pm.response.json().errors[0].message).to.include(\"Slack\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"slack\",\n  \"url\": \"https://example.com/not-slack\",\n  \"events\": [\n    \"alert.opened\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhook: connect Slack",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"format slack\", () => pm.expect(pm.response.json().data.format).to.eql(\"slack\"));",
+                  "pm.collectionVariables.set(\"slackHookId\", pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"slack\",\n  \"url\": \"https://hooks.slack.com/services/T000/B000/postman\",\n  \"events\": [\n    \"alert.opened\",\n    \"alert.resolved\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhook: delete the Slack one",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{slackHookId}}"
+          }
+        },
+        {
+          "name": "Projects: create one to complete",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"doneProjectId\", pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman completed {{$timestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Projects: mark completed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"completed_at set\", () => pm.expect(pm.response.json().data.completed_at).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{doneProjectId}}/complete",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Dashboards: create in a completed project (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"says completed\", () => pm.expect(pm.response.json().message).to.include(\"completed\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/dashboards",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman frozen\",\n  \"project_id\": \"{{doneProjectId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Projects: delete while completed (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{doneProjectId}}"
+          }
+        },
+        {
+          "name": "Projects: reopen",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{doneProjectId}}/reopen",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Projects: delete after reopening",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{doneProjectId}}"
           }
         }
       ]

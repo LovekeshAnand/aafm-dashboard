@@ -12,8 +12,16 @@ import {
 
 const PAD = { top: 10, right: 8, bottom: 22, left: 52 };
 
-/** A shaded time span on a chart, e.g. an anomaly alert (Tier 2 D). */
-export type ChartBand = { from: string; to: string | null; open: boolean };
+/**
+ * A shaded time span on a chart, e.g. an anomaly alert (Tier 2 D). `label` explains it on
+ * hover and in the tooltip (Prompt 68: the red bands alone weren't understandable).
+ */
+export type ChartBand = {
+  from: string;
+  to: string | null;
+  open: boolean;
+  label: string;
+};
 
 function useSize<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -168,8 +176,10 @@ export function SeriesChart({
           {bands.map((b) => {
             const from = xAt(new Date(b.from).getTime());
             const to = xAt(b.to ? new Date(b.to).getTime() : tN);
+            const wide = to - from >= 52;
             return (
               <g key={b.from}>
+                <title>{b.label}</title>
                 <rect
                   x={from}
                   y={PAD.top}
@@ -178,6 +188,15 @@ export function SeriesChart({
                   fill="var(--color-danger)"
                   opacity={b.open ? 0.16 : 0.08}
                 />
+                {/* A flag at the top: "⚠ Alert" (just "⚠" when the band is narrow). */}
+                <text
+                  x={from + 4}
+                  y={PAD.top + 11}
+                  className="fill-danger text-[10px] font-semibold"
+                  opacity={b.open ? 1 : 0.7}
+                >
+                  {wide ? "⚠ Alert" : "⚠"}
+                </text>
                 <line
                   x1={from}
                   x2={from}
@@ -198,7 +217,7 @@ export function SeriesChart({
                 x2={PAD.left + plotW}
                 y1={y(t)}
                 y2={y(t)}
-                stroke="rgb(255 255 255 / 0.06)"
+                stroke="var(--color-line)"
               />
               <text
                 x={PAD.left - 8}
@@ -264,7 +283,8 @@ export function SeriesChart({
                 x2={x(hover!)}
                 y1={PAD.top}
                 y2={PAD.top + plotH}
-                stroke="rgb(255 255 255 / 0.25)"
+                stroke="var(--color-ink-3)"
+                strokeOpacity={0.6}
                 strokeDasharray="3 3"
               />
               {hovered.value !== null && (
@@ -309,6 +329,19 @@ export function SeriesChart({
               ? "No value (nothing to divide by)"
               : formatSource(source, hovered.value)}
           </div>
+          {bands
+            .filter((b) => {
+              const t = new Date(hovered.t).getTime();
+              return (
+                t >= new Date(b.from).getTime() &&
+                (b.to === null || t <= new Date(b.to).getTime())
+              );
+            })
+            .map((b) => (
+              <div key={b.from} className="mt-1 font-medium text-danger">
+                ⚠ {b.label.replace(/^Alert: /, "")}
+              </div>
+            ))}
         </div>
       )}
 

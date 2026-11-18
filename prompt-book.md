@@ -510,3 +510,122 @@ ok before pushing anything address this issue
 [Pasted: GitHub secret scanning alert "Stripe Webhook Signing Secret #1", publicly leaked secret whsec_MfKQ9r8G… detected in backend/test/unit.test.js, backend/test/tier3.test.js and backend/test/hardening.test.js (commit c785ad4 tier-three-checklist)]
 
 ---
+
+## Prompt 60 (2026-11-18 18:08 IST)
+
+no we will keep it 8gb only and now give me the command to deploy
+
+---
+
+## Prompt 61 (2026-11-18 18:11 IST)
+
+Ran over ssh (via `!`): step 1 (Docker 25.0.14, Compose v2.29.7, git, 2 GiB swap): succeeded.
+
+lets first deploy the frontend on cloudflare using terminal here only and then i'll add a sub-domain from one of my domain and we will use it
+
+---
+
+## Prompt 62 (2026-11-18 18:15 IST)
+
+aafm-dashboard.kelados.in this is the domain that i added
+
+---
+
+## Prompt 63 (2026-11-18 18:19 IST)
+
+ok so i added the dns record
+
+---
+
+## Prompt 64 (2026-11-18 18:54 IST)
+
+Ran over ssh (via `!`): step 2 (clone, server .env, Cloudflare ranges), the certificate upload, and step 4 (build, 13 migrations, keyring, stack up; local 401 through Nginx): all succeeded.
+
+i have added the routes
+
+---
+
+## Prompt 65 (2026-11-18 19:05 IST)
+
+i have added all the prefixes and saved everything
+
+---
+
+## Prompt 66 (2026-11-18 19:11 IST)
+
+Ran over ssh (via `!`): diagnostic: security group "launch-wizard", 443 listening, no host firewall, containers healthy, no Cloudflare requests in the Nginx log.
+
+try again i already did it
+
+---
+
+## Prompt 67 (2026-11-18 19:13 IST)
+
+we can seed the database with the data we tested locally
+
+---
+
+## Prompt 68 (2026-11-18 22:19 IST)
+
+Ran over ssh (via `!`): demo seed on production: 1 org, 2 teams, 5 users, 40340 metric points.
+
+the threshold sign in alerts is not needed we can add a simple alert symbol or something else and also on graph those alert red lines are properly not understandable we should write something or symbolize there about the alert and then we will work on the UI polishing and also write a professional readme along [Image #17] and we will work on few more features alomng side
+
+[Image #17: banner "AAFM, Multi-tenant real-time collaborative dashboard, Assignment by BuildableLabs" (C:\Users\ZBook\Downloads\AAFM.png)]
+
+[Pasted feature list:]
+project completion feature forever
+
+show previous metrics to be used again while creating a new metric
+
+notify people after changing their role or password or team
+
+you have been added to the new team notification
+
+simplify webhook for non IT people
+
+search bar in audit log and pagination and also filter by issues and provide other filters also
+show a filter for sorting errors too
+
+request permission to show the data
+ticket system to see the data (for example I want to see ARPU of finance only)
+
+---
+
+## Prompt 69 (2026-11-18 22:22 IST)
+
+### Questions Claude asked (docs/next-features-plan.md)
+
+1. What does "project completion feature forever" mean?
+2. F7 data requests: what should an approved request show the requester?
+3. Which features first, given ~16 h to the deadline?
+
+### User's answers (dialog)
+
+1. Mark project completed
+2. That one metric, read-only (Recommended)
+3. F3+F4 notifications, F6 audit search & filters, F5 simple webhooks, F7 data access requests
+
+---
+
+## Prompt 70 (2026-11-18 23:08 IST)
+
+i want light mode too for the dashboard
+
+---
+
+## Prompt 71 (2026-11-18 23:27 IST)
+
+the expansion of alerts and notification is moving the bottom out of the screen and also now work on polishing the UI more like in this image [Image #19] if the metric is declining the card has bit of red sharde and if increasing it has green shade of gfraph we will implement it in metrics cart of the overall section below the banner and i dont like the pill bases dashboard changer we can improve it and change it to something better that enhances the overall look of the UI like what we can do is if a particular dashboard is selected we can show it like the selected this [Image #20]
+
+(Image #19: two KPI cards, "Total orders 1054, +330 today, ↑56.4% Past 30 days" with a green area sparkline and green-tinted background; "Unfulfilled 233, 18 today, ↑21.8%" with a red sparkline and red tint. Image #20: a hand-drawn sketch of a panel with a folder-style tab attached to its top edge.)
+
+---
+
+## Prompt 72 (2026-11-18 23:31 IST)
+
+[Image #21] the metrics are not looking good the text too and also the selector should not be scrollable horizontally adjust it properly on the screen
+
+(Image #21: the six overview cards in light mode. Each sparkline starts with a hard vertical edge mid-card and runs through the big number and the "… the 24 hours before" line; the end dot is cut off at the right edge.)
+
+---

@@ -370,15 +370,19 @@ describe("audit: compressed archive, label index, chain across both (E19)", () =
     for (let i = 0; i < 5; i++)
       await admin.call("POST", "/projects", { name: `arch-${i}` });
     await boss.call("POST", "/teams", { name: "Other team" });
+    // Every page (F6: numbered pages over live and archived entries).
     const all = async (client, query = "") => {
       const out = [];
-      let before = "";
-      for (;;) {
-        const res = await client.call("GET", `/audit?limit=7${query}${before}`);
+      let asOf = "";
+      for (let page = 1; ; page++) {
+        const res = await client.call(
+          "GET",
+          `/audit?size=10&page=${page}${query}${asOf}`
+        );
         assert.equal(res.status, 200);
         out.push(...res.body.data.entries);
-        if (res.body.data.next_before === null) return out;
-        before = `&before=${res.body.data.next_before}`;
+        if (page >= res.body.data.pages) return out;
+        asOf = `&as_of=${res.body.data.as_of}`; // stable pages
       }
     };
     const beforeCompaction = await all(boss);

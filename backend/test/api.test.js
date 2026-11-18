@@ -377,7 +377,18 @@ describe("metrics", () => {
       `/metrics/series?metric=revenue&from=${from}&to=${to}&bucket=1h`
     );
     assert.equal(res.status, 200);
-    assert.ok(res.body.data.points.length >= 24);
+    // One point per hour that has data. Compare with the database rather than assuming 24:
+    // the simulator only writes while a backend runs, so local data can have gaps.
+    const {
+      rows: [db],
+    } = await owner.query(
+      `SELECT count(DISTINCT date_bin('1 hour', ts, $2::timestamptz))::int AS hours
+       FROM metric_points
+       WHERE team_id = $1 AND metric = 'revenue' AND ts >= $2 AND ts < $3`,
+      [ids.Finance, from, to]
+    );
+    assert.ok(db.hours >= 20, `seed data is missing (${db.hours} hours)`);
+    assert.equal(res.body.data.points.length, db.hours);
 
     const leak = await bob.call(
       "GET",

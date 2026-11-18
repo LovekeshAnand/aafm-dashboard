@@ -187,7 +187,9 @@ const getDashboard = asyncHandler(async (req, res) => {
     const {
       rows: [row],
     } = await db.query(
-      `SELECT ${DASHBOARD_COLUMNS} FROM dashboards WHERE id = $1`,
+      `SELECT ${DASHBOARD_COLUMNS},
+              (SELECT completed_at FROM projects p WHERE p.id = dashboards.project_id) AS project_completed_at
+       FROM dashboards WHERE id = $1`,
       [req.params.id]
     );
     if (!row) throw new ApiError(404, "Not found");
