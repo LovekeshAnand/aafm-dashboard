@@ -45,8 +45,15 @@ const SEED_METRICS_SQL = `
                              date_trunc('minute', now()), interval '5 minutes') ts`;
 
 const seed = async () => {
-  if (process.env.NODE_ENV === "production")
-    throw new Error("refusing to seed in production");
+  // The seed ERASES every organization. In production it runs only on purpose, to load the
+  // demo org for a fresh live demo (Prompt 56): ALLOW_DEMO_SEED=1, once, before real use.
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.ALLOW_DEMO_SEED !== "1"
+  )
+    throw new Error(
+      "refusing to seed in production (it erases all data); set ALLOW_DEMO_SEED=1 to load the demo org on a fresh install"
+    );
 
   const client = new pg.Client({
     connectionString: process.env.MIGRATION_DATABASE_URL,

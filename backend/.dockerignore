@@ -1,0 +1,9 @@
+# Never send local state or secrets into the image build.
+node_modules
+.env
+.env.*
+!.env.sample
+secrets
+test
+*.log
+aafm-dashboard.postman_collection.json

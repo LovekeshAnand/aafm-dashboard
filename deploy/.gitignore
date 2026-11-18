@@ -1,0 +1,6 @@
+# Server-only files: secrets, certificates, backups and generated config.
+.env
+secrets/
+certs/
+backups/
+nginx/cloudflare-real-ip.conf

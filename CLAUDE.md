@@ -49,6 +49,11 @@ Back every feature I suggest with research from the internet. Cite the sources (
   - Index every column used by RLS policies or for filtering.
   - Migrations are append-only once anything has been deployed. Before the first deploy, `001_tenancy.sql` may still be edited in place.
 - **API conventions:** snake_case JSON in both requests and responses (matches the DB, so no mapping layer). SQL lives in the controllers, always inside `req.db()`, which is `withContext`. Every handler uses `asyncHandler`, `ApiResponse` and `ApiError`.
+- **Deployment (Prompts 55–57):** `docs/deployment-plan.md`.
+  - Backend and Postgres 18 in Docker on EC2 behind Nginx (`deploy/`).
+  - Frontend on Cloudflare Workers (OpenNext).
+  - One hostname: Cloudflare routes `/api/*` and `/socket.io*` to EC2, everything else to the Worker.
+  - `cacheComponents` is off (it hangs on Workers, #54).
 - **Frontend (Prompt 13):** `frontend/` uses Next.js 16.4 (App Router, `src/`), TypeScript, Tailwind v4, and the same Prettier config as the backend.
   - Next 16 differs from training data, so read `frontend/node_modules/next/dist/docs/` before using an API.
   - The browser talks only to the Next origin. In development, `/api/*` is rewritten to Express (`BACKEND_URL`). In production, Nginx routes `/api/*` straight to Express (problems-log #13).

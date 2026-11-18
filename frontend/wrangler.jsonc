@@ -1,0 +1,25 @@
+// Cloudflare Worker for the Next.js frontend (OpenNext adapter, Prompt 55).
+// Setup per https://opennext.js.org/cloudflare/get-started.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aafm-dashboard",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "aafm-dashboard"
+    }
+  ],
+  // Routing (docs/deployment-plan.md): the Worker serves the app's hostname, and two routes
+  // with NO Worker send /api/* and /socket.io* to the origin (EC2 behind Cloudflare), so pages,
+  // API and WebSocket share one origin. Fill in your hostname and zone, then deploy:
+  // "routes": [{ "pattern": "app.example.com/*", "zone_name": "example.com" }],
+  // The two no-Worker routes are added in the dashboard (Workers Routes), see the runbook.
+  "observability": { "enabled": true }
+}

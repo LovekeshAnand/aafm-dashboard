@@ -9,7 +9,13 @@ import { io, type Socket } from "socket.io-client";
 let socket: Socket | null = null;
 export const getSocket = () => {
   if (socket) return socket;
-  const s = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
+  // Only a development build may point elsewhere: Next also loads .env.local into production
+  // builds, and a leftover localhost URL would silently break live updates on the live site.
+  const devUrl =
+    process.env.NODE_ENV === "development"
+      ? process.env.NEXT_PUBLIC_SOCKET_URL
+      : undefined;
+  const s = io(devUrl || undefined, {
     withCredentials: true,
     autoConnect: true,
     // Must match the server: Next.js redirects "/socket.io/" (trailing slash) when proxying.

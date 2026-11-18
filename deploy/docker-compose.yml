@@ -1,0 +1,67 @@
+# Production stack on one EC2 instance (Prompt 56: Postgres in Docker for full control).
+#   db     Postgres 18, reachable only on the internal network (no published port)
+#   api    Express API + Socket.IO + background jobs (simulator, webhooks, housekeeping)
+#   nginx  TLS, real client IP from Cloudflare, WebSocket upgrade, request ids
+# Run from this folder: docker compose up -d   (secrets come from ./.env, see .env.example)
+name: aafm
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aafm
+      POSTGRES_USER: aafm_owner # superuser: runs migrations and owns the cross-tenant jobs (#8)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/18/docker; mount the parent.
+      - pgdata:/var/lib/postgresql
+      - ./backups:/backups
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aafm_owner -d aafm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  api:
+    build: ../backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 8000
+      # Requests come only from the nginx container: exactly one trusted proxy hop.
+      TRUST_PROXY: 1
+      DATABASE_URL: postgres://aafm_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@db:5432/aafm
+      MIGRATION_DATABASE_URL: postgres://aafm_owner:${POSTGRES_PASSWORD}@db:5432/aafm
+      WEBHOOK_KEYRING_FILE: /app/secrets/webhook-keyring.json
+    volumes:
+      - ./secrets:/app/secrets # keyring (mode 600, owned by uid 1000 = node)
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal, edge]
+    stop_grace_period: 20s # graceful shutdown finishes in-flight webhook sends (E16)
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/aafm.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/cloudflare-real-ip.conf:/etc/nginx/cloudflare-real-ip.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+    networks: [edge]
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
+    internal: true # no route to the internet: the database is unreachable from outside
+  edge:

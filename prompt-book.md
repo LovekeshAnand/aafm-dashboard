@@ -457,3 +457,56 @@ the webhooks retries should be written in the audit log as in a dashboard where 
 first we will focus on the problems that you faced and then we will focus on polishing the UI i will share some more inspirations for the UI for now lets fix the features and then we will start testing everything
 
 ---
+
+## Prompt 55 (2026-11-18 17:14 IST)
+
+before polishing the frontend lets deploy everything and then we can polish the frontend, the backend will deployed on an ec2-instance and then we will deploy the frontend on cloudflare workers and eventually we will use neon for the db
+
+---
+
+## Prompt 56 (2026-11-18 17:18 IST)
+
+### Questions Claude asked (docs/deployment-plan.md; the dialog was interrupted)
+
+1. Neon Free vs 24/7 real-time: Neon Free + idle mode, Neon paid, or Postgres in Docker on EC2?
+2. A domain on Cloudflare for one shared site?
+3. How commands reach the EC2 instance?
+4. Commit and push so the server can pull the code?
+
+### User's prompt
+
+i prefere the docker in ec2 then for full control
+
+---
+
+## Prompt 57 (2026-11-18 17:37 IST)
+
+### Questions Claude asked (after Prompt 56)
+
+1. A domain on Cloudflare (one shared hostname for pages, /api and /socket.io)?
+2. How should commands reach the EC2 instance?
+3. Commit and push everything since 'tier-2 plan'?
+4. Rehearse the whole stack locally in Docker first?
+
+### User's answers (dialog)
+
+1. Yes, on Cloudflare
+2. You run them (Recommended)
+3. I'll commit and push
+4. Skip the rehearsal
+
+---
+
+## Prompt 58 (2026-11-18 18:06 IST)
+
+Ran over ssh (via `!`): `ssh -i dashboard-backend.pem ec2-user@13.232.231.236` (key path and first-connection host-key prompt failed), then the corrected command: Amazon Linux 2023, x86_64, 2 vCPU, 913 MiB RAM, no swap, 8 GB disk.
+
+---
+
+## Prompt 59 (2026-11-18 18:06 IST)
+
+ok before pushing anything address this issue
+
+[Pasted: GitHub secret scanning alert "Stripe Webhook Signing Secret #1", publicly leaked secret whsec_MfKQ9r8G… detected in backend/test/unit.test.js, backend/test/tier3.test.js and backend/test/hardening.test.js (commit c785ad4 tier-three-checklist)]
+
+---

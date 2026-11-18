@@ -18,7 +18,7 @@ process.env.WEBHOOK_ALLOW_PRIVATE = "1"; // the receiver below listens on 127.0.
 const { app } = await import("../src/app.js");
 const { pool, withContext } = await import("../src/db/pool.js");
 const { initRealtime } = await import("../src/realtime.js");
-const { deliverDue, send } = await import("../src/webhooks.js");
+const { deliverDue, newSecret, send } = await import("../src/webhooks.js");
 
 const PASSWORD = process.env.SEED_PASSWORD || "Password@123";
 const owner = new pg.Client({
@@ -725,7 +725,7 @@ describe("webhooks (Tier 3 C)", () => {
         url: `http://localhost:${receiver.address().port}/ok`,
         event_id: "00000000-0000-4000-8000-000000000000",
         body: "{}",
-        secret: "whsec_REDACTED",
+        secret: newSecret(), // any key: the request is refused before signing matters
       });
       assert.equal(result.ok, false);
       assert.match(result.error, /not allowed/);

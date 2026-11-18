@@ -23,7 +23,7 @@ const { app } = await import("../src/app.js");
 const { pool } = await import("../src/db/pool.js");
 const { initRealtime } = await import("../src/realtime.js");
 const { runHousekeeping } = await import("../src/maintenance.js");
-const { checkUrl, send } = await import("../src/webhooks.js");
+const { checkUrl, newSecret, send } = await import("../src/webhooks.js");
 const { hashPassword } = await import("../src/utils/password.js");
 
 const PASSWORD = "Hardening-test-password-1";
@@ -522,7 +522,7 @@ describe("webhook worker limits (E15, E18)", () => {
         url: `http://127.0.0.1:${silent.address().port}/`,
         event_id: "00000000-0000-4000-8000-000000000000",
         body: "{}",
-        secret: "whsec_REDACTED",
+        secret: newSecret(), // any key: the endpoint never answers
       });
       assert.equal(result.ok, false);
       assert.match(result.error, /No response within 1.5 s/);

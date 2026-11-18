@@ -7,11 +7,12 @@ const backendUrl = process.env.BACKEND_URL ?? "http://localhost:8000";
 // E21 (docs/edge-case-audit.md): Content-Security-Policy as defense in depth against XSS.
 // Next.js's "Without Nonces" form (frontend/node_modules/next/dist/docs/01-app/02-guides/
 // content-security-policy.md): nonces need every page dynamically rendered and are
-// incompatible with Partial Prerendering, which this app uses (cacheComponents). Scripts and
+// incompatible with Partial Prerendering. Scripts and
 // styles stay same-origin; the only other connection allowed is the dev socket URL (in
 // production the socket is same-origin through Nginx). Fonts are self-hosted by next/font.
 const isDev = process.env.NODE_ENV === "development";
-const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+// Same rule as src/lib/realtime.ts: the direct socket URL exists only in development.
+const socketUrl = isDev ? process.env.NEXT_PUBLIC_SOCKET_URL : undefined;
 const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
@@ -28,6 +29,9 @@ const csp = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  // Served as-is on Cloudflare Workers: the only next/image is the hero banner, not worth a
+  // billed Cloudflare Images binding.
+  images: { unoptimized: true },
   headers: async () => [
     {
       source: "/(.*)",
@@ -43,8 +47,11 @@ const nextConfig: NextConfig = {
       ],
     },
   ],
-  cacheComponents: true,
-  partialPrefetching: true,
+  // No cacheComponents / partialPrefetching (Prompt 57): on Cloudflare Workers, Next.js
+  // "cannot guarantee that Cache Components will run as expected" (the runtime's setTimeout),
+  // and the Worker hung on every page with it on. Every signed-in page renders in the browser
+  // behind the session check anyway, so the app gains nothing from it. Off everywhere, so
+  // development and production behave the same.
   turbopack: {
     rules: {
       "*.css": {
