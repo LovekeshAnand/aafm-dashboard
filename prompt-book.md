@@ -629,3 +629,35 @@ the expansion of alerts and notification is moving the bottom out of the screen 
 (Image #21: the six overview cards in light mode. Each sparkline starts with a hard vertical edge mid-card and runs through the big number and the "… the 24 hours before" line; the end dot is cut off at the right edge.)
 
 ---
+
+## Prompt 73 (2026-11-18 23:37 IST)
+
+[Image #22] the dashboard selectors are not properly visible in both the themes and also we should design the bottom design cards properly too liek they should not be same as the top ones but should be good
+
+(Image #22: the folder tabs in dark mode. Every tab truncates both its name and its "Team · Project" suffix ("Mobile App Ov…  Finance · Mobi…"); the unselected tabs are faint, and the selected tab barely stands out from the background.)
+
+---
+
+## Prompt 74 (2026-11-18 23:40 IST)
+
+[Image #23] i like the cards and the selectors but now it looks too greenish like the graphs and card
+
+(Image #23: the dashboard board in dark mode. Green-tinted panel and widget tiles, line charts with a strong green area fill, and sage icon chips.)
+
+---
+
+## Prompt 75 (2026-11-18 23:41 IST)
+
+[Image #24] we should improve these selectors too in some way
+
+(Image #24: the project picker, a row of separate rounded pills: "All projects" (selected, sage), "Campaigns Marketing", "Mobile App Finance", "Web App Finance", "Website Marketing".)
+
+---
+
+## Prompt 76 (2026-11-18 23:44 IST)
+
+i created a new metric and added it as a widget so got these errors
+
+(Pasted: React warning "Encountered two children with the same key, `2026-11-18T17:28:15.390Z`" at src/components/charts.tsx (181:15) `<g key={b.from}>`, via SeriesChart ← WidgetBody ← DashboardBoard.)
+
+---

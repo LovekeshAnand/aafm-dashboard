@@ -10,6 +10,11 @@
   --color-line: rgb(255 255 255 / 0.09);
   --color-glass: rgb(255 255 255 / 0.045);
   --color-glass-strong: rgb(255 255 255 / 0.08);
+  /* Prompt 73: solid surfaces for the dashboard board (panel) and its widget tiles (surface),
+     one step apart so the tiles stand out in both themes. Neutral greys (Prompt 74: the
+     green-tinted ones made the board look too green; green stays for the data). */
+  --color-panel: #0c0d0e;
+  --color-surface: #151719;
   /* UI accent (links, active states, focus): a muted sage, deliberately not neon (Prompt 15).
      Never used to encode data. */
   --color-accent: #a8c5b3;
@@ -71,6 +76,8 @@
   --color-line: rgb(0 0 0 / 0.1);
   --color-glass: rgb(0 0 0 / 0.035);
   --color-glass-strong: rgb(0 0 0 / 0.06);
+  --color-panel: #f4f5f6;
+  --color-surface: #ffffff;
   --color-accent: #2f6b4a;
   --color-danger: #c42727;
   --color-warn: #a14b06;

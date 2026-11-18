@@ -17,6 +17,9 @@ const PAD = { top: 10, right: 8, bottom: 22, left: 52 };
  * hover and in the tooltip (Prompt 68: the red bands alone weren't understandable).
  */
 export type ChartBand = {
+  /** The alert's id: unique even when a KPI or custom metric shows several alerts that opened
+   * in the same tick (the start time alone collided, Prompt 76). */
+  id: string;
   from: string;
   to: string | null;
   open: boolean;
@@ -162,7 +165,7 @@ export function SeriesChart({
               <stop
                 offset="0%"
                 stopColor="var(--color-series)"
-                stopOpacity="0.35"
+                stopOpacity="0.14"
               />
               <stop
                 offset="100%"
@@ -178,7 +181,7 @@ export function SeriesChart({
             const to = xAt(b.to ? new Date(b.to).getTime() : tN);
             const wide = to - from >= 52;
             return (
-              <g key={b.from}>
+              <g key={b.id}>
                 <title>{b.label}</title>
                 <rect
                   x={from}
@@ -338,7 +341,7 @@ export function SeriesChart({
               );
             })
             .map((b) => (
-              <div key={b.from} className="mt-1 font-medium text-danger">
+              <div key={b.id} className="mt-1 font-medium text-danger">
                 ⚠ {b.label.replace(/^Alert: /, "")}
               </div>
             ))}

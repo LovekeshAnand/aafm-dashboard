@@ -1,8 +1,15 @@
 "use client";
 
 import {
+  Bug,
   Check,
+  DollarSign,
+  Eye,
+  Gauge,
+  MousePointerClick,
+  Sigma,
   TriangleAlert,
+  Users,
   GripVertical,
   Maximize2,
   Move,
@@ -103,9 +110,26 @@ const sourceMetrics = (source: Source, customs: CustomMetric[]): Metric[] =>
           )
         );
 
-// Graph widgets sit on solid black (Prompt 27), not frosted glass, so the data reads cleanly.
+// Graph widgets sit on a solid surface (Prompt 27), not frosted glass, so the data reads
+// cleanly. Prompt 73: a tile one step above the board panel, so it stands out in both themes,
+// with a hairline under its header; deliberately plainer than the overview cards on top.
 const WIDGET_CARD =
-  "flex h-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-black p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]";
+  "flex h-full flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgb(0_0_0/0.08)] transition-[border-color,box-shadow] hover:border-accent/40";
+
+/** An icon per data source, shown in the widget header (Prompt 73). */
+const SOURCE_ICON = {
+  revenue: DollarSign,
+  page_views: Eye,
+  clicks: MousePointerClick,
+  errors: Bug,
+  users: Users,
+} as const;
+const sourceIcon = (source: Source) =>
+  "metric" in source
+    ? SOURCE_ICON[source.metric]
+    : "kpi" in source
+      ? Gauge
+      : Sigma;
 
 // Every widget reads its own dashboard's project (Tier 3 A).
 function WidgetBody({
@@ -792,6 +816,7 @@ export function DashboardBoard({
                     inputs.includes(a.metric)
                 );
                 const anomaly = widgetAlerts.find((a) => a.status === "open");
+                const SourceIcon = sourceIcon(source);
                 return (
                   <div key={w.id}>
                     <div
@@ -803,7 +828,7 @@ export function DashboardBoard({
                               "border-accent/70 shadow-[0_0_0_1px_rgb(168_197_179/0.5),0_0_32px_-6px_rgb(168_197_179/0.45)]"
                       )}
                     >
-                      <div className="mb-3 flex items-center gap-2">
+                      <div className="flex items-center gap-2.5 border-b border-line px-4 py-2.5">
                         {editing && (
                           <span
                             className="drag-handle cursor-grab text-ink-3 active:cursor-grabbing"
@@ -812,6 +837,9 @@ export function DashboardBoard({
                             <GripVertical size={16} />
                           </span>
                         )}
+                        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-glass-strong text-ink-2">
+                          <SourceIcon size={14} aria-hidden />
+                        </span>
                         <h3 className="min-w-0 flex-1 truncate text-sm font-medium">
                           {w.title || sourceLabel(source)}
                         </h3>
@@ -849,16 +877,18 @@ export function DashboardBoard({
                             </IconButton>
                           </>
                         ) : (
-                          <span className="text-xs text-ink-3">
+                          <span className="rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-ink-3 uppercase">
                             {"custom" in source
                               ? "Custom"
                               : "kpi" in source
                                 ? "KPI"
-                                : sourceLabel(source)}
+                                : w.type === "stat"
+                                  ? "Total"
+                                  : w.type}
                           </span>
                         )}
                       </div>
-                      <div className="min-h-0 flex-1">
+                      <div className="min-h-0 flex-1 p-4">
                         <WidgetBody
                           widget={w}
                           dashboard={dashboard}
@@ -866,6 +896,7 @@ export function DashboardBoard({
                           win={win}
                           summary={summary.data}
                           bands={widgetAlerts.map((a) => ({
+                            id: a.id,
                             from: a.opened_at,
                             to: a.resolved_at,
                             open: a.status === "open",

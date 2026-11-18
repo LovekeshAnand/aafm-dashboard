@@ -137,7 +137,7 @@ function CreateDashboard({
  * they cover all of the team's projects.
  */
 const LIST_LIMIT = 100;
-const TAB_MIN = 120; // px: below this a tab name is unreadable, so it moves into "More"
+const TAB_MIN = 140; // px: below this a tab name is unreadable, so it moves into "More"
 const MORE_WIDTH = 120;
 const lastDay = () => {
   const to = new Date();
@@ -211,36 +211,63 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
   const pickProject = (id: string | null) =>
     router.push(id ? `/dashboards?project=${id}` : "/dashboards");
 
+  // Project picker (Prompt 75): one segmented control instead of loose pills. Organization-wide,
+  // projects sit under small team labels, so the team isn't repeated on every option.
+  const segment = (selected: boolean) =>
+    cx(
+      "rounded-lg px-3.5 py-1.5 text-sm whitespace-nowrap transition",
+      selected
+        ? "bg-surface font-medium text-ink shadow-[0_1px_3px_rgb(0_0_0/0.25)] ring-1 ring-line"
+        : "text-ink-2 hover:bg-glass-strong hover:text-ink"
+    );
+  const projectGroups = orgWide
+    ? (teams.data ?? [])
+        .map((t) => ({
+          team: t,
+          projects: projectList.filter((p) => p.team_id === t.id),
+        }))
+        .filter((g) => g.projects.length)
+    : [{ team: null, projects: projectList }];
   const projectPicker = projectList.length > 0 && (
     <div
       role="tablist"
       aria-label="Projects"
-      className="mb-4 flex max-w-full flex-wrap gap-2"
+      className="mb-4 inline-flex max-w-full flex-wrap items-center gap-1 rounded-xl border border-line bg-panel p-1"
     >
-      {[null, ...projectList].map((p) => {
-        const selected = (p?.id ?? null) === project;
-        return (
-          <button
-            key={p?.id ?? "all"}
-            role="tab"
-            aria-selected={selected}
-            onClick={() => pickProject(p?.id ?? null)}
-            className={cx(
-              "rounded-full border px-4 py-1.5 text-sm transition",
-              selected
-                ? "border-accent/60 bg-accent/15 text-accent"
-                : "border-white/10 bg-black text-ink-2 hover:text-ink"
-            )}
-          >
-            {p ? p.name : "All projects"}
-            {p && orgWide && (
-              <span className="ml-1.5 text-xs text-ink-3">
-                {teamName(p.team_id)}
-              </span>
-            )}
-          </button>
-        );
-      })}
+      <button
+        role="tab"
+        aria-selected={project === null}
+        onClick={() => pickProject(null)}
+        className={segment(project === null)}
+      >
+        All projects
+      </button>
+      {projectGroups.map(({ team, projects: group }) => (
+        <div
+          key={team?.id ?? "team"}
+          role="group"
+          aria-label={team?.name}
+          className="flex flex-wrap items-center gap-1"
+        >
+          <span aria-hidden className="mx-1 h-5 w-px bg-line" />
+          {team && (
+            <span className="px-1.5 text-[11px] font-medium tracking-wide text-ink-3 uppercase">
+              {team.name}
+            </span>
+          )}
+          {group.map((p) => (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={p.id === project}
+              onClick={() => pickProject(p.id)}
+              className={segment(p.id === project)}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 
@@ -285,17 +312,22 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
             title={where ? `${d.name} (${where})` : d.name}
             onClick={() => open(d.id)}
             className={cx(
-              "flex max-w-60 min-w-0 flex-1 items-baseline gap-2 rounded-t-xl border border-b-0 px-4 text-left text-sm transition",
+              "flex max-w-64 min-w-0 flex-initial flex-col rounded-t-xl border border-b-0 px-4 text-left transition",
               selected
-                ? "border-line bg-canvas py-3 font-semibold text-ink"
-                : "border-transparent py-2.5 text-ink-3 hover:bg-glass-strong hover:text-ink"
+                ? "border-line bg-panel pt-2.5 pb-3 text-ink shadow-[inset_0_2px_0_var(--color-accent)]"
+                : "mb-0.5 border-line bg-glass py-2 text-ink-2 hover:bg-glass-strong hover:text-ink"
             )}
           >
-            <span className="truncate">{d.name}</span>
+            <span
+              className={cx(
+                "truncate text-sm",
+                selected ? "font-semibold" : "font-medium"
+              )}
+            >
+              {d.name}
+            </span>
             {where && (
-              <span className="hidden truncate text-xs font-normal text-ink-3 xl:inline">
-                {where}
-              </span>
+              <span className="truncate text-[11px] text-ink-3">{where}</span>
             )}
           </button>
         );
@@ -305,7 +337,7 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
           aria-label="More dashboards"
           value=""
           onChange={(e) => e.target.value && open(e.target.value)}
-          className="mb-1 h-8 shrink-0 cursor-pointer rounded-lg border border-line bg-canvas px-2 text-sm text-ink-2 hover:text-ink"
+          className="mb-1 h-8 shrink-0 cursor-pointer rounded-lg border border-line bg-panel px-2 text-sm text-ink-2 hover:text-ink"
           style={{ width: MORE_WIDTH - 8 }}
         >
           <option value="">More ({hidden.length})</option>
@@ -441,7 +473,7 @@ export function DashboardsHome({ selectedId }: { selectedId?: string }) {
           {folderTabs}
           <div
             className={cx(
-              "rounded-2xl border border-line bg-canvas p-4 lg:p-5",
+              "rounded-2xl border border-line bg-panel p-4 lg:p-5",
               firstSelected && "rounded-tl-none"
             )}
           >

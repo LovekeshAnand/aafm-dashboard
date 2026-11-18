@@ -140,7 +140,7 @@ npm run dev                  # http://localhost:3000
 | `backend: npm test` | Real HTTP, real sockets, real database: isolation, roles, real-time, KPIs, anomalies, projects, audit, custom metrics, webhooks, hardening, notifications, audit search, chat webhooks, shared data, completed projects, plus unit tests | **140 / 140** |
 | Postman | `backend/aafm-dashboard.postman_collection.json`, 132 requests across all tiers, security checks and the new features | 101 requests verified (131 assertions); folder 10 (31 requests) awaits its first run |
 | Frontend | `npm run typecheck && npm run lint && npm run build` | clean |
-| Manual | Step-by-step checklists in `docs/tier-*-test-checklist.md` | Tiers 1–2 verified by hand |
+| Manual | Step-by-step checklists in `docs/tier-*-test-checklist.md` and `docs/features-test-checklist.md` | Run and signed off by me (Tiers 1–2 done) |
 
 ## Deployment
 
@@ -151,11 +151,13 @@ The full runbook is [`docs/deployment-plan.md`](docs/deployment-plan.md):
 
 ## How it was built
 
-This project was built with an AI pair programmer (Claude Code) under explicit rules ([`CLAUDE.md`](CLAUDE.md)):
+I built this project with the help of Claude as a coding assistant, working under rules I set ([`CLAUDE.md`](CLAUDE.md)):
 - every feature backed by research with sources;
-- no assumptions without asking;
+- no assumptions: open questions come back to me before any work starts;
 - every problem logged;
-- no commit without approval.
+- nothing committed or deployed without my approval.
+
+**Testing and review.** Every change was tested and reviewed by me before it was accepted. I reviewed every UI change myself, worked through each tier's test checklist by hand, ran the automated suites and Postman, and decided what was committed and deployed.
 
 The complete prompt history is in [`prompt-book.md`](prompt-book.md), and every issue found along the way is in [`problems-log.md`](problems-log.md).
 
