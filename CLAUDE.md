@@ -68,11 +68,24 @@ Back every feature I suggest with research from the internet. Cite the sources (
   - Anomaly alerts: a fixed rule, 2σ vs the trailing hour, closing at |z| < 1.5 (hysteresis). In-dashboard only.
   - Team and org socket channels carry `dashboards:changed`, `teams:changed`, `metrics:tick` and `alerts:changed`.
   - Details: `docs/tier-2-plan.md` § As built.
-- **Tier 3 (Prompts 47–48):** plan in `docs/tier-3-plan.md`, built in the order A → B → D → C → E.
+- **Tier 3 (Prompts 47–49):** plan and "As built" in `docs/tier-3-plan.md`; checklist in `docs/tier-3-test-checklist.md`.
   - Projects are reached through the team (Sentry model).
   - Audit log: named reads plus writes, auth events and denials; append-only and hash-chained.
   - Webhooks: alert, dashboard and member events per team, using Standard Webhooks signing and an SSRF guard.
   - Custom metrics: formulas per team over the base metrics.
+  - Every write and named read calls `audit()` (`src/utils/audit.js`) inside its own transaction. Webhook events go out via `emitWebhook()`, in the same transaction.
+  - Events (Prompt 51): the audit stays in-transaction (Option A in `docs/decision-event-streaming.md`). Its triggers decide when to add an outbox or a queue.
+  - Prompt 54:
+    - The database owner must bypass RLS; migrations and startup check this.
+    - Rate limits are shared in Postgres.
+    - Audit checkpoints are signed.
+    - Optional separate worker (`npm run worker`, `RUN_WORKERS=false`).
+  - Production hardening (Prompts 50–53): `docs/edge-case-audit.md`, with all 25 fixed.
+    - Caps and time limits live in the DB (migration 011).
+    - Rate limits and Idempotency-Key are middleware.
+    - Older audit entries are archived into LZ4-compressed segments (every entry kept).
+    - Webhook secrets are AES-256-GCM sealed (keyring file, `npm run keyring`).
+  - Dev only: `WEBHOOK_ALLOW_PRIVATE=1` lets webhooks reach a local receiver (`backend/scripts/webhook-receiver.js`). Never set it in production.
 - **Roles:** there's a Super Admin over the whole organization, then an Admin for each team (department), plus Editors and Viewers. The Super Admin creates the organization and has full edit and delete rights plus oversight of every team and member (Prompt 7).
 - **Accounts (AWS IAM style, Prompt 7):** a Super Admin or Admin creates users and shares the credentials. The server generates a one-time password, shows it once, and forces a password change at first sign-in. There's no self-sign-up for members. An email that already has an account just gets the new membership (Prompt 8).
 - **Org bootstrap (Prompt 8):** public sign-up creates the organization and its Super Admin in one step, like AWS root sign-up.

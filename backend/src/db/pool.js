@@ -1,10 +1,20 @@
 import pg from "pg";
 
 // Connects as aafm_app, which has no BYPASSRLS, so every query is bound by RLS.
+// E8: node-postgres waits for a free connection forever by default; after 5 s the request
+// gets a 503 "busy, retry" instead (error middleware). Query and transaction time limits are
+// set on the role itself (migration 011), so they hold for every connection.
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number(process.env.DB_POOL_MAX) || 10,
+  connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS) || 5000,
 });
+// E7: an idle connection dropped by the server (restart, network) emits "error" on the pool.
+// Without a listener that is an uncaught error that can crash the process; pg already
+// discards the broken client, so logging is all that's needed.
+pool.on("error", (err) =>
+  console.error("idle database connection lost:", err.message)
+);
 
 /**
  * Runs `work(client)` in one transaction with the tenant context set transaction-locally

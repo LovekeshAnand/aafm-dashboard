@@ -9,6 +9,8 @@
     "start": "node --env-file=.env src/index.js",
     "migrate": "node --env-file=.env src/db/migrate.js",
     "seed": "node --env-file=.env src/db/seed.js",
+    "keyring": "node --env-file=.env scripts/keyring.js",
+    "worker": "node --env-file=.env src/worker.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

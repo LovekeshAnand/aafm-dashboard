@@ -4,7 +4,7 @@ import { Bell, ChevronDown, TrendingDown, TrendingUp, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { type AlertEvent, useAlerts } from "@/lib/alerts";
 import { useSocketEvent } from "@/lib/realtime";
-import { type Alert, METRIC_LABEL, type Team } from "@/lib/types";
+import { type Alert, METRIC_LABEL, type Project, type Team } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
 import { cx, IconButton } from "./ui";
 
@@ -21,7 +21,7 @@ const ago = (iso: string) => {
 const describe = (a: Pick<Alert, "metric" | "direction" | "z">) =>
   `${METRIC_LABEL[a.metric]} ${Math.abs(a.z).toFixed(1)}σ ${a.direction} normal`;
 
-function AlertRow({ alert, teamName }: { alert: Alert; teamName?: string }) {
+function AlertRow({ alert, where }: { alert: Alert; where: string }) {
   const open = alert.status === "open";
   const Icon = alert.direction === "above" ? TrendingUp : TrendingDown;
   return (
@@ -41,7 +41,7 @@ function AlertRow({ alert, teamName }: { alert: Alert; teamName?: string }) {
           {describe(alert)}
         </span>
         <span className="text-ink-3">
-          {teamName && `${teamName} · `}
+          {where && `${where} · `}
           {open
             ? `open · ${ago(alert.opened_at)}`
             : `resolved · ${ago(alert.resolved_at!)}`}
@@ -58,9 +58,16 @@ function AlertRow({ alert, teamName }: { alert: Alert; teamName?: string }) {
 export function AlertsPanel({ orgWide }: { orgWide: boolean }) {
   const { alerts, open } = useAlerts();
   const teams = useApi<Team[]>(orgWide ? "/teams" : null);
+  const projects = useApi<Project[]>("/projects");
   const [expanded, setExpanded] = useState(false);
-  const teamName = (id: string) =>
-    orgWide ? teams.data?.find((t) => t.id === id)?.name : undefined;
+  // Where it fired: the project (Tier 3 A), plus the team for the org-wide Super Admin.
+  const where = (a: Alert) =>
+    [
+      orgWide && teams.data?.find((t) => t.id === a.team_id)?.name,
+      projects.data?.find((p) => p.id === a.project_id)?.name,
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
   return (
     <section className="mt-6">
@@ -88,7 +95,7 @@ export function AlertsPanel({ orgWide }: { orgWide: boolean }) {
           {alerts.length ? (
             <ul aria-label="Anomaly alerts">
               {alerts.slice(0, 20).map((a) => (
-                <AlertRow key={a.id} alert={a} teamName={teamName(a.team_id)} />
+                <AlertRow key={a.id} alert={a} where={where(a)} />
               ))}
             </ul>
           ) : (

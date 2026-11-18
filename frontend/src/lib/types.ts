@@ -34,9 +34,18 @@ export type Member = {
   created_at: string;
 };
 
+// --- Tier 3 A: Org -> Team -> Project
+export type Project = {
+  id: string;
+  team_id: string;
+  name: string;
+  created_at: string;
+};
+
 export type Dashboard = {
   id: string;
   team_id: string;
+  project_id: string;
   name: string;
   version: number;
   created_by: string | null;
@@ -47,9 +56,10 @@ export type Dashboard = {
 export type Widget = {
   id: string;
   type: WidgetType;
-  /** Exactly one of metric / kpi is set (Tier 2 C). */
+  /** Exactly one of metric / kpi / custom_metric_id is set (Tier 2 C, Tier 3 D). */
   metric: Metric | null;
   kpi: Kpi | null;
+  custom_metric_id: string | null;
   title: string;
   x: number;
   y: number;
@@ -67,7 +77,33 @@ export type KpiRow = {
   current: number | null;
   previous: number | null;
 };
-export type Summary = { metrics: SummaryRow[]; kpis: KpiRow[] };
+export type CustomRow = Pick<CustomMetric, "id" | "name" | "unit"> & {
+  current: number | null;
+  previous: number | null;
+};
+export type Summary = {
+  metrics: SummaryRow[];
+  kpis: KpiRow[];
+  custom: CustomRow[];
+};
+
+// --- Tier 3 D: custom metric definitions (formulas over the base metrics, per team)
+export type MetricUnit = "number" | "currency" | "percent";
+export type CustomMetric = {
+  id: string;
+  team_id: string;
+  name: string;
+  formula: string;
+  unit: MetricUnit;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+export const UNIT_LABEL: Record<MetricUnit, string> = {
+  number: "Number",
+  currency: "Currency ($)",
+  percent: "Percent (%)",
+};
 
 // --- Tier 2 C: built-in KPIs (ratios of sums of two base metrics, computed on the server)
 export type Kpi = "arpu" | "ctr" | "error_rate";
@@ -76,19 +112,46 @@ export const KPI_LABEL: Record<Kpi, string> = {
   ctr: "Click-through rate",
   error_rate: "Error rate",
 };
+/** The two base metrics each KPI divides (mirrors KPIS in backend/src/constants.js). */
+export const KPI_METRICS: Record<Kpi, Metric[]> = {
+  arpu: ["revenue", "users"],
+  ctr: ["clicks", "page_views"],
+  error_rate: ["errors", "page_views"],
+};
 export const KPI_FORMULA: Record<Kpi, string> = {
   arpu: "Revenue ÷ Active users",
   ctr: "Clicks ÷ Page views",
   error_rate: "Errors ÷ Page views",
 };
 
-/** What a widget or tile shows: a base metric or a KPI. */
-export type Source = { metric: Metric } | { kpi: Kpi };
-export const sourceOf = (w: Pick<Widget, "metric" | "kpi">): Source =>
-  w.kpi ? { kpi: w.kpi } : { metric: w.metric as Metric };
-export const sourceKey = (s: Source) => ("kpi" in s ? s.kpi : s.metric);
+/** What a widget or tile shows: a base metric, a KPI or a custom metric (Tier 3 D). */
+export type Source =
+  | { metric: Metric }
+  | { kpi: Kpi }
+  | { custom: Pick<CustomMetric, "id" | "name" | "unit"> };
+export const sourceOf = (
+  w: Pick<Widget, "metric" | "kpi" | "custom_metric_id">,
+  customs: Pick<CustomMetric, "id" | "name" | "unit">[] = []
+): Source =>
+  w.custom_metric_id
+    ? {
+        custom: customs.find((c) => c.id === w.custom_metric_id) ?? {
+          id: w.custom_metric_id,
+          name: "Custom metric",
+          unit: "number",
+        },
+      }
+    : w.kpi
+      ? { kpi: w.kpi }
+      : { metric: w.metric as Metric };
+export const sourceKey = (s: Source) =>
+  "custom" in s ? s.custom.id : "kpi" in s ? s.kpi : s.metric;
 export const sourceLabel = (s: Source) =>
-  "kpi" in s ? KPI_LABEL[s.kpi] : METRIC_LABEL[s.metric];
+  "custom" in s
+    ? s.custom.name
+    : "kpi" in s
+      ? KPI_LABEL[s.kpi]
+      : METRIC_LABEL[s.metric];
 /** For errors and the error rate, going down is the good direction. */
 export const lowerIsBetter = (s: Source) =>
   ("metric" in s && s.metric === "errors") ||
@@ -98,6 +161,7 @@ export const lowerIsBetter = (s: Source) =>
 export type Alert = {
   id: string;
   team_id: string;
+  project_id: string;
   metric: Metric;
   status: "open" | "resolved";
   direction: "above" | "below";
@@ -154,5 +218,77 @@ const currency = new Intl.NumberFormat("en-US", {
 export const formatKpi = (kpi: Kpi, value: number) =>
   kpi === "arpu" ? currency.format(value) : percent.format(value);
 
+const compact = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
+
+/** A custom metric's value is shown as-is in its unit ("percent" means the formula already
+ * multiplied by 100). */
+export const formatUnit = (unit: MetricUnit, value: number) =>
+  unit === "currency"
+    ? currency.format(value)
+    : unit === "percent"
+      ? `${compact.format(value)}%`
+      : compact.format(value);
+
 export const formatSource = (s: Source, value: number) =>
-  "kpi" in s ? formatKpi(s.kpi, value) : formatMetric(s.metric, value);
+  "custom" in s
+    ? formatUnit(s.custom.unit, value)
+    : "kpi" in s
+      ? formatKpi(s.kpi, value)
+      : formatMetric(s.metric, value);
+
+// --- Tier 3 B: audit log
+export type AuditEntry = {
+  seq: number;
+  team_id: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  result: "allowed" | "denied" | "failed";
+  ip: string | null;
+  user_agent: string | null;
+  meta: Record<string, unknown>;
+  at: string;
+};
+
+// --- Tier 3 C: webhooks
+export const WEBHOOK_EVENTS = [
+  "alert.opened",
+  "alert.resolved",
+  "dashboard.created",
+  "dashboard.updated",
+  "dashboard.deleted",
+  "member.added",
+  "member.removed",
+] as const;
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+export type Webhook = {
+  id: string;
+  team_id: string;
+  project_id: string | null;
+  url: string;
+  description: string;
+  events: WebhookEvent[];
+  enabled: boolean;
+  failure_count: number;
+  disabled_reason: string | null;
+  created_at: string;
+  last_status: Delivery["status"] | null;
+};
+export type Delivery = {
+  id: string;
+  event_id: string;
+  event: string;
+  status: "pending" | "sending" | "delivered" | "failed";
+  attempt: number;
+  next_attempt_at: string;
+  response_code: number | null;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  body: string;
+};

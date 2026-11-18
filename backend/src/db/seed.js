@@ -23,16 +23,22 @@ const MEMBERSHIPS = [
   ["dave@acme.test", "Marketing", "admin"],
 ];
 
-// 7 days at 5-minute resolution: base x daily cycle x +/-15% noise, scaled per team with
-// app.team_scale() so the live simulator (migration 003) continues the same curve.
+// Tier 3 A: each team's projects (the first one renames the automatic "General" project).
+const PROJECTS = {
+  Finance: ["Web App", "Mobile App"],
+  Marketing: ["Campaigns", "Website"],
+};
+
+// 7 days at 5-minute resolution per project: base x daily cycle x +/-15% noise, scaled per
+// project with app.team_scale() so the live simulator (migration 006) continues the same curve.
 const SEED_METRICS_SQL = `
-  INSERT INTO metric_points (org_id, team_id, metric, ts, value)
-  SELECT t.org_id, t.id, m.metric, ts,
-         round((m.base * t.scale
+  INSERT INTO metric_points (org_id, team_id, project_id, metric, ts, value)
+  SELECT p.org_id, p.team_id, p.id, m.metric, ts,
+         round((m.base * p.scale
                 * (1 + 0.3 * sin(2 * pi() * extract(hour FROM ts) / 24))
                 * (0.85 + random() * 0.3))::numeric, 2)
-  FROM (SELECT id, org_id, app.team_scale(id) AS scale
-        FROM teams WHERE org_id = $1) t
+  FROM (SELECT id, org_id, team_id, app.team_scale(id) AS scale
+        FROM projects WHERE org_id = $1) p
   CROSS JOIN (VALUES ('revenue'::metric_name, 500.0), ('page_views', 1200.0),
                      ('clicks', 300.0), ('errors', 5.0), ('users', 120.0)) m(metric, base)
   CROSS JOIN generate_series(date_trunc('minute', now()) - interval '7 days',
@@ -48,7 +54,11 @@ const seed = async () => {
   await client.connect();
   try {
     await client.query("BEGIN");
-    await client.query("TRUNCATE organizations, users CASCADE");
+    // audit_log has no FK to organizations (it outlives deletions), so it is cleared explicitly;
+    // TRUNCATE does not fire the append-only row trigger. Development only (see the guard above).
+    await client.query(
+      "TRUNCATE organizations, users, audit_log, audit_segments, audit_checkpoints CASCADE"
+    );
 
     const {
       rows: [org],
@@ -82,27 +92,37 @@ const seed = async () => {
     }
 
     for (const team of teams) {
+      const [first, ...others] = PROJECTS[team.name];
+      await client.query("UPDATE projects SET name = $2 WHERE team_id = $1", [
+        team.id,
+        first,
+      ]);
+      for (const name of others)
+        await client.query(
+          "INSERT INTO projects (org_id, team_id, name) VALUES ($1, $2, $3)",
+          [org.id, team.id, name]
+        );
+      // Tier 3 D: one example custom metric per team, shown on each dashboard.
       const {
-        rows: [dashboard],
+        rows: [custom],
       } = await client.query(
-        `INSERT INTO dashboards (org_id, team_id, name, created_by)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [org.id, team.id, `${team.name} Overview`, userId["super@acme.test"]]
+        `INSERT INTO custom_metrics (org_id, team_id, name, formula, unit, created_by)
+         VALUES ($1, $2, 'Revenue per click', 'revenue / clicks', 'currency', $3) RETURNING id`,
+        [org.id, team.id, userId["super@acme.test"]]
       );
-      await client.query(
-        `INSERT INTO widgets (dashboard_id, org_id, team_id, type, metric, title, x, y, w, h)
-         VALUES ($1, $2, $3, 'line', 'revenue', 'Revenue', 0, 0, 6, 4),
-                ($1, $2, $3, 'line', 'page_views', 'Page views', 6, 0, 6, 4),
-                ($1, $2, $3, 'stat', 'clicks', 'Clicks', 0, 4, 3, 2),
-                ($1, $2, $3, 'stat', 'errors', 'Errors', 3, 4, 3, 2),
-                ($1, $2, $3, 'stat', 'users', 'Active users', 6, 4, 3, 2)`,
-        [dashboard.id, org.id, team.id]
+      const { rows: projects } = await client.query(
+        "SELECT id, name FROM projects WHERE team_id = $1 ORDER BY created_at, name",
+        [team.id]
       );
-      await client.query(
-        `INSERT INTO widgets (dashboard_id, org_id, team_id, type, kpi, title, x, y, w, h)
-         VALUES ($1, $2, $3, 'stat', 'arpu', 'ARPU', 9, 4, 3, 2)`,
-        [dashboard.id, org.id, team.id]
-      );
+      for (const project of projects)
+        await seedDashboard(
+          client,
+          org.id,
+          team.id,
+          project,
+          custom.id,
+          userId
+        );
     }
 
     const { rowCount } = await client.query(SEED_METRICS_SQL, [org.id]);
@@ -118,6 +138,42 @@ const seed = async () => {
   } finally {
     await client.end();
   }
+};
+
+// One dashboard per project: the five base metrics, the ARPU KPI and the team's custom metric.
+const seedDashboard = async (
+  client,
+  orgId,
+  teamId,
+  project,
+  customId,
+  userId
+) => {
+  const {
+    rows: [{ id }],
+  } = await client.query(
+    `INSERT INTO dashboards (org_id, team_id, project_id, name, created_by)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [
+      orgId,
+      teamId,
+      project.id,
+      `${project.name} Overview`,
+      userId["super@acme.test"],
+    ]
+  );
+  await client.query(
+    `INSERT INTO widgets (dashboard_id, org_id, team_id, type, metric, kpi, custom_metric_id,
+                          title, x, y, w, h)
+     VALUES ($1, $2, $3, 'line', 'revenue', NULL, NULL, 'Revenue', 0, 0, 6, 4),
+            ($1, $2, $3, 'line', 'page_views', NULL, NULL, 'Page views', 6, 0, 6, 4),
+            ($1, $2, $3, 'stat', 'clicks', NULL, NULL, 'Clicks', 0, 4, 3, 2),
+            ($1, $2, $3, 'stat', 'errors', NULL, NULL, 'Errors', 3, 4, 3, 2),
+            ($1, $2, $3, 'stat', 'users', NULL, NULL, 'Active users', 6, 4, 3, 2),
+            ($1, $2, $3, 'stat', NULL, 'arpu', NULL, 'ARPU', 9, 4, 3, 2),
+            ($1, $2, $3, 'stat', NULL, NULL, $4::uuid, 'Revenue per click', 0, 6, 3, 2)`,
+    [id, orgId, teamId, customId]
+  );
 };
 
 seed().catch((err) => {

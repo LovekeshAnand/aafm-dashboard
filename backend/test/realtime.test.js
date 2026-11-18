@@ -136,13 +136,19 @@ describe("live dashboard sync", () => {
     assert.equal(await connected(alice), "connected");
 
     assert.deepEqual(await join(bob, dashboard.id), { ok: true });
-    const presence = once(alice, "presence");
+    // Presence is a stream of snapshots: Bob's join may still deliver a "Bob only" snapshot
+    // after Alice entered the room (problems-log #41). And anyone else watching the shared
+    // seeded org (a developer's open browser follows new dashboards live) may also appear,
+    // so wait for the snapshot that includes both, not for exactly two.
+    const both = new Promise((resolve) =>
+      alice.on("presence", ({ users }) => {
+        const names = users.map((u) => u.name);
+        if (names.includes("Alice Admin") && names.includes("Bob Editor"))
+          resolve(true);
+      })
+    );
     assert.deepEqual(await join(alice, dashboard.id), { ok: true });
-    const [{ users }] = await presence;
-    assert.deepEqual(users.map((u) => u.name).sort(), [
-      "Alice Admin",
-      "Bob Editor",
-    ]);
+    assert.equal(await both, true);
 
     let bobGotOwnEvent = false;
     bob.on("dashboard:changed", () => (bobGotOwnEvent = true));
@@ -163,10 +169,13 @@ describe("live dashboard sync", () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     assert.equal(bobGotOwnEvent, false, "the author's own tab is skipped");
 
-    const editing = once(bob, "presence");
+    const editing = new Promise((resolve) =>
+      bob.on("presence", ({ users }) => {
+        if (users.find((u) => u.name === "Alice Admin")?.editing) resolve(true);
+      })
+    );
     alice.emit("presence:editing", true);
-    const [{ users: after }] = await editing;
-    assert.equal(after.find((u) => u.name === "Alice Admin").editing, true);
+    assert.equal(await editing, true, "Bob sees Alice marked as editing");
   });
 });
 
@@ -202,34 +211,43 @@ describe("team channel (Tier 2 A)", () => {
 });
 
 describe("live metrics simulator (Tier 2 B)", () => {
-  test("a tick writes one point per metric per team and pushes each team only its own", async () => {
+  test("a tick writes one point per metric per project and pushes each team only its own", async () => {
     const { runTick } = await import("../src/simulator.js");
     const bob = open(await signIn("bob"));
     const carol = open(await signIn("carol"));
     assert.equal(await connected(bob), "connected");
     assert.equal(await connected(carol), "connected");
 
-    // Let this test claim the interval even if a running dev server ticked a moment ago.
-    await owner.query(
-      "UPDATE simulator_state SET last_tick = now() - interval '1 hour'"
-    );
+    // Let this test claim the interval. A running dev server may claim it first (its own
+    // simulator), so retry a few times instead of assuming this process wins.
     const bobTick = once(bob, "metrics:tick");
     const carolTick = once(carol, "metrics:tick");
-    const rows = await runTick(5);
+    let rows = [];
+    for (let attempt = 0; attempt < 5 && !rows.length; attempt++) {
+      await owner.query(
+        "UPDATE simulator_state SET last_tick = now() - interval '1 hour'"
+      );
+      rows = await runTick(5);
+    }
 
+    // Judge the tick by its own rows (other suites add projects in parallel): every project
+    // in it has exactly one point for each of the five metrics.
     const { rows: teams } = await owner.query("SELECT id, name FROM teams");
-    assert.equal(
-      rows.length,
-      teams.length * 5,
-      "one point per team per metric"
-    );
+    const perProject = Map.groupBy(rows, (r) => r.project_id);
+    assert.ok(perProject.size >= 4, "every seeded project ticked");
+    for (const points of perProject.values())
+      assert.deepEqual(
+        points.map((p) => p.metric).sort(),
+        ["clicks", "errors", "page_views", "revenue", "users"],
+        "one point per project (Tier 3 A) per metric"
+      );
 
     const finance = teams.find((t) => t.name === "Finance").id;
     const marketing = teams.find((t) => t.name === "Marketing").id;
     const [[forBob], [forCarol]] = await Promise.all([bobTick, carolTick]);
     assert.equal(forBob.team_id, finance);
     assert.equal(forCarol.team_id, marketing);
-    assert.deepEqual(forBob.points.map((p) => p.metric).sort(), [
+    assert.deepEqual([...new Set(forBob.points.map((p) => p.metric))].sort(), [
       "clicks",
       "errors",
       "page_views",

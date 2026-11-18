@@ -2,22 +2,32 @@ import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { ADMINS, EDITORS, ROLES } from "../constants.js";
 import * as alerts from "../controllers/alert.controller.js";
+import * as audit from "../controllers/audit.controller.js";
 import * as auth from "../controllers/auth.controller.js";
+import * as customMetrics from "../controllers/custom-metric.controller.js";
 import * as dashboards from "../controllers/dashboard.controller.js";
 import * as metrics from "../controllers/metric.controller.js";
+import * as projects from "../controllers/project.controller.js";
 import * as teams from "../controllers/team.controller.js";
+import * as webhooks from "../controllers/webhook.controller.js";
 import {
   authenticate,
   requireContext,
   requireRole,
 } from "../middlewares/auth.middleware.js";
+import { idempotency } from "../middlewares/idempotency.middleware.js";
+import { apiLimiter, writeLimiter } from "../middlewares/limits.middleware.js";
 import { ApiError } from "../utils/ApiError.js";
+import { PostgresStore } from "../utils/rate-limit-store.js";
 
-// ponytail: in-memory store is per process; move to a shared store (Redis/Postgres) when the
-// API runs on more than one instance. Per-account lockout (in the DB) covers distributed guessing.
+// Per client IP, shared by every instance (Postgres store, problems-log #13). Per-account
+// lockout (in the DB) also covers distributed guessing. Behind Nginx, TRUST_PROXY=1 makes req.ip
+// the real client (deploy item, #13).
+const authLimit = Number(process.env.AUTH_RATE_LIMIT) || 10;
 const authLimiter = rateLimit({
+  store: new PostgresStore(`auth:${authLimit}`),
   windowMs: 15 * 60 * 1000,
-  limit: Number(process.env.AUTH_RATE_LIMIT) || 10,
+  limit: authLimit,
   standardHeaders: "draft-8",
   legacyHeaders: false,
   handler: (req, res, next) =>
@@ -28,13 +38,16 @@ const router = Router();
 
 router.post("/auth/signup", authLimiter, auth.signup);
 router.post("/auth/login", authLimiter, auth.login);
-router.post("/auth/context", authenticate, auth.selectContext);
-router.post("/auth/password", authenticate, auth.changePassword);
-router.post("/auth/logout", authenticate, auth.logout);
-router.get("/auth/me", authenticate, auth.me);
+// Signed-in calls are rate limited per session (E1, docs/edge-case-audit.md).
+const signedIn = [authenticate, apiLimiter, writeLimiter];
+router.post("/auth/context", signedIn, auth.selectContext);
+router.post("/auth/password", signedIn, auth.changePassword);
+router.post("/auth/logout", signedIn, auth.logout);
+router.get("/auth/me", signedIn, auth.me);
 
 // Everything below needs a session with a changed password and a selected context.
-router.use(authenticate, requireContext);
+// POSTs honour an Idempotency-Key (E20).
+router.use(signedIn, requireContext, idempotency);
 const editors = requireRole(EDITORS);
 const admins = requireRole(ADMINS);
 const superAdmin = requireRole(ROLES.SUPER_ADMIN);
@@ -63,6 +76,32 @@ router.delete("/widgets/:id", editors, dashboards.deleteWidget);
 router.get("/metrics/series", metrics.series);
 router.get("/metrics/summary", metrics.summary);
 router.get("/metrics/kpi", metrics.kpiSeries);
+router.get("/metrics/custom", metrics.customSeries);
+router.get("/metrics/formula", metrics.formulaPreview);
 router.get("/alerts", alerts.listAlerts);
+
+// Tier 3
+router.get("/projects", projects.listProjects);
+router.post("/projects", admins, projects.createProject);
+router.patch("/projects/:id", admins, projects.renameProject);
+router.delete("/projects/:id", admins, projects.deleteProject);
+
+router.get("/custom-metrics", customMetrics.listCustomMetrics);
+router.post("/custom-metrics", editors, customMetrics.createCustomMetric);
+router.patch("/custom-metrics/:id", editors, customMetrics.updateCustomMetric);
+router.delete("/custom-metrics/:id", editors, customMetrics.deleteCustomMetric);
+
+router.get("/audit", admins, audit.listAudit);
+router.get("/audit/verify", admins, audit.verifyAudit);
+router.get("/audit/storage", admins, audit.auditStorage);
+
+router.get("/webhooks", admins, webhooks.listWebhooks);
+router.post("/webhooks", admins, webhooks.createWebhook);
+router.patch("/webhooks/:id", admins, webhooks.updateWebhook);
+router.delete("/webhooks/:id", admins, webhooks.deleteWebhook);
+router.post("/webhooks/:id/rotate-secret", admins, webhooks.rotateSecret);
+router.post("/webhooks/:id/test", admins, webhooks.testWebhook);
+router.get("/webhooks/:id/deliveries", admins, webhooks.listDeliveries);
+router.post("/webhook-deliveries/:id/redeliver", admins, webhooks.redeliver);
 
 export { router };

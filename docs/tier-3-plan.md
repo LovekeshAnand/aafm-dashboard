@@ -1,6 +1,6 @@
 # Tier 3 Plan: Advanced
 
-Status: **decisions made** (Prompt 48, 2026-11-18 02:20 IST). Drafted in Prompt 47. Tiers 1 and 2 are complete and verified by the user (Prompts 37 and 46).
+Status: **built, awaiting the user's review** (Prompt 49). Decisions in Prompt 48, drafted in Prompt 47. Tiers 1 and 2 are complete and verified by the user (Prompts 37 and 46).
 
 Brief, page 2, Tier 3:
 1. Three-level hierarchy (Org → Team → Project)
@@ -162,12 +162,93 @@ AWS CloudTrail detects tampering by chaining hashes, where each digest includes 
 
 ---
 
+## As built (Prompt 49, finished 2026-11-18 ~14:30 IST)
+
+The checklists above are the plan. This section records what was built, **including where it changed and why**.
+
+**A. Projects: done.** Migration `006_projects.sql`.
+- `projects` table under RLS: everyone in the team reads; Admins and the Super Admin write.
+- Dashboards, metric points and alerts carry `project_id`, with a composite FK `(project_id, team_id, org_id)` so a row can never point at another team's project.
+- A trigger gives every new team a **General** project. Existing rows moved into it.
+- The simulator and anomaly detection run per project.
+- API:
+  - `GET/POST/PATCH/DELETE /projects`, refusing to delete a team's last project (409);
+  - a `project_id` filter on dashboards, series, KPIs, summary and alerts;
+  - `POST /dashboards` takes a `project_id`.
+- Seed: Finance has **Web App** and **Mobile App**; Marketing has **Campaigns** and **Website**. There's one "<project> Overview" dashboard each.
+- UI:
+  - a **Projects** page (manage, with dashboard counts);
+  - a project picker on the dashboards home (`?project=`, which scopes the cards and the switcher);
+  - a project choice in New dashboard;
+  - widgets read their own dashboard's project;
+  - alerts name their project.
+
+**B. Audit log: done.** Migration `007_audit.sql`.
+- Recorded:
+  - sign-in success and failure, sign-out, team switch, password change and reset, org creation;
+  - every write;
+  - named reads: `dashboard.view`, `members.view`, `audit.view`;
+  - every 403/404 on a signed-in request, as `access.denied`.
+- The hash chain is built **before** the INSERT, so no UPDATE ever touches the table.
+- **Changed from the plan:**
+  1. `org_id` is not a foreign key either. A cascading delete would collide with the append-only rule, and the trail should outlive deletions anyway (#37).
+  2. Two writes don't make the request wait:
+     - **failed sign-ins**, so a real account isn't measurably slower to refuse than an unknown one (account enumeration);
+     - **denials**, which run after the request's transaction rolled back.
+- UI: an **Audit log** page (Admins and the Super Admin) with action, result and team filters, "Load older" paging, and **Verify integrity**.
+
+**D. Custom metrics: done.** Migration `008_custom_metrics.sql`; parser in `src/utils/formula.js`.
+- About 150 lines: a recursive-descent parser, SQL built only from the tree (names and numbers bound as parameters), and a JS evaluator for totals.
+- The built-in KPIs now run through the same engine, since a KPI is just the formula `a / b`.
+- A widget's source is exactly one of metric, KPI or custom metric (`num_nonnulls(...) = 1`). A composite FK keeps it on its own team's metric, and a metric still used by widgets can't be deleted (409 names the widgets).
+- **Added:** `GET /metrics/formula`, a live validation and preview of an unsaved formula. The editor shows the exact error and character position, or the last 24 h curve.
+- UI:
+  - a **Custom metrics** page (Editors and up create; everyone reads);
+  - a "Custom metrics" group in Add widget → Shows;
+  - number widgets via `summary.custom`.
+
+**C. Webhooks: done.** Migration `009_webhooks.sql`; worker in `src/webhooks.js`.
+- **Signing:** Standard Webhooks, verified in a unit test against the spec's published test vector. Rotation keeps the old secret signing for 24 h, so a message carries two signatures.
+- **Outbox:**
+  - dashboard and member events are queued in the same transaction as the change;
+  - alert events are queued by a database trigger on `alerts`;
+  - the worker claims due rows with `FOR UPDATE SKIP LOCKED` every 2 s.
+- **SSRF guard** (OWASP):
+  - http(s) only, no credentials in the URL;
+  - every resolved address is checked;
+  - the socket connects to the checked address (custom `lookup`);
+  - redirects are never followed.
+  - `WEBHOOK_ALLOW_PRIVATE=1` lifts the address check for local development only.
+- **Secrets:** the app role has no SELECT on the secret columns, only the worker's claim function returns them.
+  - **Prompt 50:** they are also encrypted at rest. AES-256-GCM, bound to the webhook's id, with keys in a keyring file kept outside the database and the repo (`npm run keyring -- init | rotate | prune`). The server refuses to start without it. OWASP Cryptographic Storage Cheat Sheet; a KMS is the managed upgrade.
+- **Delivery outcomes in the audit log (Prompt 50, reversing the first build):** recorded with the actor "Webhook worker", the host only (never the path or query, which can hold tokens), and pushed live to the Webhooks page (`webhooks:changed`):
+  - every failed attempt, with the code, the error and the next attempt time;
+  - the final give-up;
+  - an automatic disable;
+  - a success after earlier failures.
+  - A first-try success isn't audited; the deliveries list shows it.
+- **Added:** `backend/scripts/webhook-receiver.js`, a local endpoint that prints deliveries and checks their signatures.
+- UI: a **Webhooks** page with:
+  - add an endpoint (URL, events, optional project), with the secret shown once;
+  - send test, enable/disable, rotate, delete;
+  - a deliveries list with the body, status, attempt and error, and Redeliver (same `webhook-id`).
+
+**Also fixed on the way:** the socket cookie parser bug (problems-log #35).
+
+**Verification:**
+- Backend **96/96** after Prompt 50 (was 90/90): new `test/tier3.test.js` (22) and Tier 3 unit tests (10 more in `test/unit.test.js`).
+- Frontend typecheck, lint and build are clean.
+- Postman: new folder **08 Tier 3** (37 requests). The collection now has **101 requests** and **131/131** assertions pass against a live server.
+- Checklist: `docs/tier-3-test-checklist.md`.
+
 ## Known ceilings (to be logged as they're built)
 
-- Audit hash chain: one advisory lock per org serializes audit writes within an org. That's fine at this scale; use per-org batching or a signed digest per hour (CloudTrail style) at volume.
+- Audit hash chain: one advisory lock per org serializes audit writes within an org. Measured at about 3,200 writes/s for one org (Prompt 50), so it's fine at this scale. Growth is handled by the compressed archive (Prompt 53).
 - The webhook worker runs inside the API process. Split it into its own process when delivery volume grows.
 - The SSRF guard relies on our own DNS check plus connecting to the checked IP. Production should also put egress behind a filtering proxy (the Standard Webhooks spec suggests smokescreen).
 - No anomaly detection on custom metrics (only base metrics, as in Tier 2).
+- Charts assume values at or above zero; a custom formula that goes negative (e.g. `clicks - errors * 1000`) draws below the axis.
+- Webhook secrets are encrypted with a keyring file (Prompt 50); envelope encryption with a cloud KMS is the managed upgrade.
 
 ---
 

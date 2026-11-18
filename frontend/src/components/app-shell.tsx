@@ -1,6 +1,15 @@
 "use client";
 
-import { ArrowLeftRight, LayoutDashboard, LogOut, Users } from "lucide-react";
+import {
+  ArrowLeftRight,
+  FolderKanban,
+  LayoutDashboard,
+  LogOut,
+  ScrollText,
+  Sigma,
+  Users,
+  Webhook,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, Suspense } from "react";
@@ -13,12 +22,21 @@ import {
 } from "@/components/session";
 import { cx, IconButton } from "@/components/ui";
 import { api } from "@/lib/api";
-import { ROLE_LABEL } from "@/lib/types";
+import { ADMINS, type Membership, ROLE_LABEL } from "@/lib/types";
 
+// Tier 3 pages: Projects and Custom metrics are for everyone in the team (read-only below
+// their role); Webhooks and the Audit log are team administration. The server enforces the
+// same rules; hiding links only keeps the menu honest.
 const NAV = [
   { href: "/dashboards", label: "Dashboards", icon: LayoutDashboard },
+  { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/metrics", label: "Custom metrics", icon: Sigma },
   { href: "/teams", label: "Teams & people", icon: Users },
+  { href: "/webhooks", label: "Webhooks", icon: Webhook, admin: true },
+  { href: "/audit", label: "Audit log", icon: ScrollText, admin: true },
 ];
+const navFor = (active: Membership | null) =>
+  NAV.filter((item) => !item.admin || (active && ADMINS.includes(active.role)));
 
 function Sidebar() {
   const pathname = usePathname();
@@ -55,7 +73,7 @@ function Sidebar() {
       </Link>
 
       <nav className="mt-6 grid gap-1.5" aria-label="Main">
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {navFor(active).map(({ href, label, icon: Icon }) => {
           const current = pathname.startsWith(href);
           return (
             <Link
@@ -101,13 +119,13 @@ function MobileBar() {
   const pathname = usePathname();
   const { active_membership: active } = useSession();
   return (
-    <header className="glass mb-4 flex items-center gap-2 rounded-xl p-1.5 lg:hidden">
-      {NAV.map(({ href, label, icon: Icon }) => (
+    <header className="glass mb-4 flex items-center gap-2 overflow-x-auto rounded-xl p-1.5 lg:hidden">
+      {navFor(active).map(({ href, label, icon: Icon }) => (
         <Link
           key={href}
           href={href}
           className={cx(
-            "flex items-center gap-2 rounded-lg px-3 py-2 text-xs",
+            "flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-xs",
             pathname.startsWith(href) ? "bg-ink text-black" : "text-ink-2"
           )}
         >
@@ -117,7 +135,7 @@ function MobileBar() {
       ))}
       <Link
         href="/select-team"
-        className="ml-auto truncate px-3 text-xs text-ink-3"
+        className="ml-auto shrink-0 truncate px-3 text-xs text-ink-3"
       >
         {active?.team_name ?? "Organization"}
       </Link>

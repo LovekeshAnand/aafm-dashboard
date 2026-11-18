@@ -41,3 +41,17 @@ export const KPIS = Object.freeze({
   ctr: { numerator: "clicks", denominator: "page_views" },
   error_rate: { numerator: "errors", denominator: "page_views" },
 });
+
+// Tier 3 C: events a webhook can subscribe to (mirrors the CHECK in migration 009).
+export const WEBHOOK_EVENTS = Object.freeze([
+  "alert.opened",
+  "alert.resolved",
+  "dashboard.created",
+  "dashboard.updated",
+  "dashboard.deleted",
+  "member.added",
+  "member.removed",
+]);
+
+// Tier 3 D: how a custom metric's value is displayed.
+export const METRIC_UNITS = Object.freeze(["number", "currency", "percent"]);

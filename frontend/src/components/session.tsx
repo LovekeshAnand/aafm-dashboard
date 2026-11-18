@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, type ReactNode, use, useEffect } from "react";
-import { ApiError } from "@/lib/api";
+import { ApiError, SESSION_EXPIRED } from "@/lib/api";
 import type { Me } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
 import { Spinner } from "./ui";
@@ -37,6 +37,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (next) router.replace(next);
   }, [next, router]);
+
+  // E13: any API call that finds the session gone (idle timeout, signed out in another tab,
+  // revoked by an admin) brings the user back to sign-in, and then to this page.
+  useEffect(() => {
+    const expired = () =>
+      router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    window.addEventListener(SESSION_EXPIRED, expired);
+    return () => window.removeEventListener(SESSION_EXPIRED, expired);
+  }, [pathname, router]);
 
   if (error && !(error instanceof ApiError && error.status === 401)) {
     return (

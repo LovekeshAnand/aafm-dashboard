@@ -118,3 +118,5 @@ dist
 .pnp.*
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Node
+# Tier 3 C: webhook-secret encryption keys (never commit; production mounts them from a secret store)
+secrets/

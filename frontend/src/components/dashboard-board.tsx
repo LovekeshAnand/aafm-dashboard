@@ -41,11 +41,13 @@ import { api, ApiError, errorText } from "@/lib/api";
 import { useAlerts } from "@/lib/alerts";
 import {
   ADMINS,
+  type CustomMetric,
   type Dashboard,
   EDITORS,
   type Kpi,
   KPI_FORMULA,
   KPI_LABEL,
+  KPI_METRICS,
   METRIC_LABEL,
   type Metric,
   type Point,
@@ -67,10 +69,13 @@ import {
 import { useApi } from "@/lib/use-api";
 
 // Range -> bucket keeps every chart well under the API's 500-point cap.
+// `refreshMs` (problems-log #29): live ticks arrive every 5 s, but a chart only needs
+// refetching as often as its view can visibly change. 1 h (5-minute buckets) follows every
+// tick; 24 h and 7 d (hourly buckets) refresh every 30 s / 60 s, which cuts requests 6-12x.
 const RANGES = {
-  "1h": { ms: 3600e3, bucket: "5m" },
-  "24h": { ms: 86400e3, bucket: "1h" },
-  "7d": { ms: 7 * 86400e3, bucket: "1h" },
+  "1h": { ms: 3600e3, bucket: "5m", refreshMs: 5_000 },
+  "24h": { ms: 86400e3, bucket: "1h", refreshMs: 30_000 },
+  "7d": { ms: 7 * 86400e3, bucket: "1h", refreshMs: 60_000 },
 } as const;
 type Range = keyof typeof RANGES;
 type Window = { range: Range; from: string; to: string };
@@ -82,38 +87,57 @@ const windowFor = (range: Range): Window => ({
 
 type DashboardWithWidgets = Dashboard & { widgets: Widget[] };
 
+/** The base metrics a widget's source reads: itself, a KPI's two, or a formula's names. */
+const sourceMetrics = (source: Source, customs: CustomMetric[]): Metric[] =>
+  "metric" in source
+    ? [source.metric]
+    : "kpi" in source
+      ? KPI_METRICS[source.kpi]
+      : (Object.keys(METRIC_LABEL) as Metric[]).filter((m) =>
+          new RegExp(`\\b${m}\\b`).test(
+            customs.find((c) => c.id === source.custom.id)?.formula ?? ""
+          )
+        );
+
 // Graph widgets sit on solid black (Prompt 27), not frosted glass, so the data reads cleanly.
 const WIDGET_CARD =
   "flex h-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-black p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]";
 
+// Every widget reads its own dashboard's project (Tier 3 A).
 function WidgetBody({
   widget,
-  teamId,
+  dashboard,
+  customs,
   win,
   summary,
   bands,
 }: {
   widget: Widget;
-  teamId: string;
+  dashboard: Dashboard;
+  customs: CustomMetric[];
   win: Window;
   summary?: Summary;
   bands: ChartBand[];
 }) {
-  const source = sourceOf(widget);
-  const query = `from=${win.from}&to=${win.to}&bucket=${RANGES[win.range].bucket}&team_id=${teamId}`;
+  const source = sourceOf(widget, customs);
+  const query = `from=${win.from}&to=${win.to}&bucket=${RANGES[win.range].bucket}&team_id=${dashboard.team_id}&project_id=${dashboard.project_id}`;
   const path =
     widget.type === "stat"
       ? null
-      : "kpi" in source
-        ? `/metrics/kpi?kpi=${source.kpi}&${query}`
-        : `/metrics/series?metric=${source.metric}&${query}`;
+      : "custom" in source
+        ? `/metrics/custom?id=${source.custom.id}&${query}`
+        : "kpi" in source
+          ? `/metrics/kpi?kpi=${source.kpi}&${query}`
+          : `/metrics/series?metric=${source.metric}&${query}`;
   const series = useApi<{ points: Point[] }>(path);
 
   if (widget.type === "stat") {
     const row =
-      "kpi" in source
-        ? summary?.kpis.find((r) => r.kpi === source.kpi)
-        : summary?.metrics.find((r) => r.metric === source.metric);
+      "custom" in source
+        ? summary?.custom.find((r) => r.id === source.custom.id)
+        : "kpi" in source
+          ? summary?.kpis.find((r) => r.kpi === source.kpi)
+          : summary?.metrics.find((r) => r.metric === source.metric);
     return row ? (
       <StatTile source={source} current={row.current} previous={row.previous} />
     ) : (
@@ -132,34 +156,55 @@ function WidgetBody({
   );
 }
 
+/** The API body for a widget's source: exactly one of metric, kpi, custom_metric_id. */
+type SourceBody =
+  { metric: Metric } | { kpi: Kpi } | { custom_metric_id: string };
+
 function WidgetForm({
   initial,
+  customs,
   onSubmit,
   onClose,
 }: {
   initial?: Widget;
-  onSubmit: (v: { type: WidgetType; title: string } & Source) => Promise<void>;
+  customs: CustomMetric[];
+  onSubmit: (
+    v: { type: WidgetType; title: string } & SourceBody
+  ) => Promise<void>;
   onClose: () => void;
 }) {
   const [type, setType] = useState<WidgetType>(initial?.type ?? "line");
-  // One select for both kinds of source, encoded "metric:revenue" / "kpi:arpu".
+  // One select for every kind of source: "metric:revenue", "kpi:arpu", "custom:<id>".
   const [sourceValue, setSourceValue] = useState(() =>
-    initial?.kpi
-      ? `kpi:${initial.kpi}`
-      : `metric:${initial?.metric ?? "revenue"}`
+    initial?.custom_metric_id
+      ? `custom:${initial.custom_metric_id}`
+      : initial?.kpi
+        ? `kpi:${initial.kpi}`
+        : `metric:${initial?.metric ?? "revenue"}`
   );
   const [title, setTitle] = useState(initial?.title ?? "");
   const [error, setError] = useState("");
   const [kind, key] = sourceValue.split(":");
+  const custom = customs.find((c) => c.id === key);
   const source: Source =
-    kind === "kpi" ? { kpi: key as Kpi } : { metric: key as Metric };
+    kind === "custom"
+      ? { custom: custom ?? { id: key, name: "Custom metric", unit: "number" } }
+      : kind === "kpi"
+        ? { kpi: key as Kpi }
+        : { metric: key as Metric };
+  const body: SourceBody =
+    kind === "custom"
+      ? { custom_metric_id: key }
+      : kind === "kpi"
+        ? { kpi: key as Kpi }
+        : { metric: key as Metric };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await onSubmit({
         type,
-        ...source,
+        ...body,
         title: title.trim() || sourceLabel(source),
       });
       onClose();
@@ -172,7 +217,13 @@ function WidgetForm({
     <form onSubmit={submit} className="grid gap-4">
       <Field
         label="Shows"
-        hint={"kpi" in source ? `KPI: ${KPI_FORMULA[source.kpi]}` : undefined}
+        hint={
+          "kpi" in source
+            ? `KPI: ${KPI_FORMULA[source.kpi]}`
+            : custom
+              ? `Custom: ${custom.formula}`
+              : undefined
+        }
       >
         <Select
           value={sourceValue}
@@ -192,6 +243,15 @@ function WidgetForm({
               </option>
             ))}
           </optgroup>
+          {customs.length > 0 && (
+            <optgroup label="Custom metrics">
+              {customs.map((c) => (
+                <option key={c.id} value={`custom:${c.id}`}>
+                  {c.name} ({c.formula})
+                </option>
+              ))}
+            </optgroup>
+          )}
         </Select>
       </Field>
       <Field label="Visualization">
@@ -214,7 +274,7 @@ function WidgetForm({
           ))}
         </div>
       </Field>
-      <Field label="Title" hint="Optional, defaults to the metric or KPI name">
+      <Field label="Title" hint="Optional, defaults to the metric's name">
         <Input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -359,7 +419,10 @@ function EditGuide({ canDelete }: { canDelete: boolean }) {
       <Maximize2 key="r" size={14} />,
       "Drag a widget's bottom-right corner to resize it",
     ],
-    [<Plus key="a" size={14} />, "Add widget picks a metric and a chart type"],
+    [
+      <Plus key="a" size={14} />,
+      "Add widget picks a metric, KPI or custom metric and a chart type",
+    ],
     [<Pencil key="p" size={14} />, "Change a widget's metric, chart or title"],
     [<Trash2 key="t" size={14} />, "Remove a widget"],
   ];
@@ -415,9 +478,14 @@ export function DashboardBoard({
   const [win, setWin] = useState<Window>(() => windowFor("24h"));
   const summary = useApi<Summary>(
     dashboard
-      ? `/metrics/summary?range=${win.range}&team_id=${dashboard.team_id}&at=${win.to}`
+      ? `/metrics/summary?range=${win.range}&team_id=${dashboard.team_id}&project_id=${dashboard.project_id}&at=${win.to}`
       : null
   );
+  // Tier 3 D: the team's custom metrics, for widget labels and the "Shows" picker.
+  const customMetrics = useApi<CustomMetric[]>(
+    dashboard ? `/custom-metrics?team_id=${dashboard.team_id}` : null
+  );
+  const customs = customMetrics.data ?? [];
   // measureBeforeMount: never draw the grid at the hook's 1280px default (Prompt 28).
   const { width, containerRef, mounted } = useContainerWidth({
     measureBeforeMount: true,
@@ -478,9 +546,18 @@ export function DashboardBoard({
   // screen while the new one loads, so there is no flicker.
   // ponytail: one refetch per widget per tick (5 s); stream deltas instead if dashboards
   // grow to many widgets or many concurrent viewers.
+  // Only ticks for this dashboard's project count, paced by the range (RANGES.refreshMs).
+  const lastRefresh = useRef(0);
   useSocketEvent<MetricTick>("metrics:tick", (tick) => {
-    if (dashboard && tick.team_id === dashboard.team_id)
-      setWin((w) => windowFor(w.range));
+    if (
+      !dashboard ||
+      tick.team_id !== dashboard.team_id ||
+      !tick.points.some((p) => p.project_id === dashboard.project_id) ||
+      Date.now() - lastRefresh.current < RANGES[win.range].refreshMs
+    )
+      return;
+    lastRefresh.current = Date.now();
+    setWin((w) => windowFor(w.range));
   });
 
   const startInteraction = () => {
@@ -681,17 +758,16 @@ export function DashboardBoard({
               }}
             >
               {dashboard.widgets.map((w) => {
-                const source = sourceOf(w);
-                // Tier 2 D: alerts on this widget's metric, as chart bands; an open one
-                // also marks the whole widget.
-                const widgetAlerts =
-                  "metric" in source
-                    ? alerts.filter(
-                        (a) =>
-                          a.team_id === dashboard.team_id &&
-                          a.metric === source.metric
-                      )
-                    : [];
+                const source = sourceOf(w, customs);
+                // Tier 2 D: alerts in this dashboard's project on any base metric the widget
+                // reads (a KPI or custom formula reads several, #29), as chart bands; an open
+                // one also marks the whole widget.
+                const inputs = sourceMetrics(source, customs);
+                const widgetAlerts = alerts.filter(
+                  (a) =>
+                    a.project_id === dashboard.project_id &&
+                    inputs.includes(a.metric)
+                );
                 const anomaly = widgetAlerts.find((a) => a.status === "open");
                 return (
                   <div key={w.id}>
@@ -751,14 +827,19 @@ export function DashboardBoard({
                           </>
                         ) : (
                           <span className="text-xs text-ink-3">
-                            {"kpi" in source ? "KPI" : sourceLabel(source)}
+                            {"custom" in source
+                              ? "Custom"
+                              : "kpi" in source
+                                ? "KPI"
+                                : sourceLabel(source)}
                           </span>
                         )}
                       </div>
                       <div className="min-h-0 flex-1">
                         <WidgetBody
                           widget={w}
-                          teamId={dashboard.team_id}
+                          dashboard={dashboard}
+                          customs={customs}
                           win={win}
                           summary={summary.data}
                           bands={widgetAlerts.map((a) => ({
@@ -783,6 +864,7 @@ export function DashboardBoard({
         title="Add widget"
       >
         <WidgetForm
+          customs={customs}
           onClose={() => setModal(null)}
           onSubmit={(v) =>
             run(() => {
@@ -810,6 +892,7 @@ export function DashboardBoard({
         {modal?.kind === "edit" && (
           <WidgetForm
             initial={modal.widget}
+            customs={customs}
             onClose={() => setModal(null)}
             onSubmit={(v) =>
               run(

@@ -95,8 +95,9 @@ const openSocket = (cookie) => {
 /** Inserts points for the throwaway team as the owner (the app role can't write metrics). */
 const insertPoints = (rows) =>
   owner.query(
-    `INSERT INTO metric_points (org_id, team_id, metric, ts, value)
-     SELECT $1, $2, r.metric::metric_name, r.ts::timestamptz, r.value
+    `INSERT INTO metric_points (org_id, team_id, project_id, metric, ts, value)
+     SELECT $1, $2, (SELECT id FROM projects WHERE team_id = $2 ORDER BY created_at LIMIT 1),
+            r.metric::metric_name, r.ts::timestamptz, r.value
      FROM jsonb_to_recordset($3) AS r(metric text, ts text, value double precision)
      ON CONFLICT DO NOTHING`,
     [testTeam.org_id, testTeam.id, JSON.stringify(rows)]

@@ -354,19 +354,19 @@ ok so now i have few questions first, we will address the issues and then we wil
 
 ---
 
-## Prompt 45 (2026-11-18 01:45 IST)
+## Prompt 45 (2026-11-18, about 01:45 IST; time typed without checking the clock, see problems-log #36)
 
 i verified all the fixes and approve them, now you can make the tier 2 checklist
 
 ---
 
-## Prompt 46 (2026-11-18 02:05 IST)
+## Prompt 46 (2026-11-18, about 02:05 IST; time typed without checking the clock, see problems-log #36)
 
 ok so i have verified the whole checklist and i am satisified with all the features, there are something related to UI accessibility we will tackle it later for now lets focus on the engineering part
 
 ---
 
-## Prompt 47 (2026-11-18 02:08 IST)
+## Prompt 47 (2026-11-18, about 02:08 IST; time typed without checking the clock, see problems-log #36)
 
 ### Questions Claude asked (after Prompt 46)
 
@@ -380,7 +380,7 @@ ok so i have verified the whole checklist and i am satisified with all the featu
 
 ---
 
-## Prompt 48 (2026-11-18 02:20 IST)
+## Prompt 48 (2026-11-18, about 02:20 IST; time typed without checking the clock, see problems-log #36)
 
 ### Questions Claude asked (Tier 3 plan, docs/tier-3-plan.md)
 
@@ -398,8 +398,62 @@ ok so i have verified the whole checklist and i am satisified with all the featu
 
 ---
 
-## Prompt 49 (2026-11-18 02:25 IST)
+## Prompt 49 (2026-11-18, about 02:25 IST; time typed without checking the clock, see problems-log #36)
 
 i agree with the tier 3 plan and we can proceed with it and complete with the frontend too so that only testing and reviewing is left
+
+---
+
+## Prompt 50 (2026-11-18 15:01 IST)
+
+the webhooks retries should be written in the audit log as in a dashboard where multiple people are working it is important to show where something failed. And the webhooks secrets should be encrypted. and according me, if the audit log is expecting a large amount writes we can implement a message queue for asynchronous event streaming and also if a outbox table is required with the db so we have to take a decision for that too if somehow message queue goes down and we have to take each decision very carefully thinking the scale of this project and the user activity. Also we have to focus more on the production grade system rather than UI. we have to handle every edge case possible, before testing lets first address all these thinsg
+
+---
+
+## Prompt 51 (2026-11-18 15:20 IST)
+
+### Questions Claude asked (after Prompt 50)
+
+1. Audit writes and a message queue (analysis in docs/decision-event-streaming.md, measured ~3,200 audit writes/s for one org): A, keep in-transaction audit with documented upgrade triggers; B, Postgres outbox + chainer; or C, outbox + message queue?
+2. Edge cases: audit first and then fix after approval, or find and fix directly?
+
+### User's answers (dialog)
+
+1. A: keep in-tx audit (Recommended)
+2. Audit first, then fix (Recommended)
+
+---
+
+## Prompt 52 (2026-11-18 15:28 IST)
+
+### Questions Claude asked (edge-case audit, docs/edge-case-audit.md)
+
+1. Which findings to fix: all High + Medium + Low, High + Medium only, or High only?
+2. E19, audit log retention: keep all and document, or monthly partitions + 1 year?
+3. Proposed limits: 600 requests/min per session (120/min writes); projects 25/team, teams 50/org, webhooks 10/team, custom metrics 50/team; query timeout 10 s, pool wait 5 s, webhook attempt deadline 10 s. OK?
+
+### User's answers (dialog)
+
+1. All High + Medium + Low (Recommended)
+2. we dont have to store this large of logs, we have to process or index the logs accordingly so we have every data, and for this assignment we can use a lightweight compressed log system.
+3. Use these values (Recommended)
+
+---
+
+## Prompt 53 (2026-11-18 15:34 IST)
+
+### Question Claude asked (after Prompt 52)
+
+1. For the audit log (E19): Loki-style storage inside Postgres (recent days as indexed rows, older entries packed into compressed segments indexed by labels, with RLS and the hash chain kept), or a real Grafana Loki service?
+
+### User's answer (dialog)
+
+1. Loki-style inside Postgres (Recommended)
+
+---
+
+## Prompt 54 (2026-11-18 16:02 IST)
+
+first we will focus on the problems that you faced and then we will focus on polishing the UI i will share some more inspirations for the UI for now lets fix the features and then we will start testing everything
 
 ---

@@ -19,15 +19,28 @@ const REVALIDATE_MS = 60_000;
 
 /** Reads one cookie from a raw Cookie header (no extra dependency needed). */
 const readCookie = (header, name) => {
-  const pair = header?.split(/;s*/).find((c) => c.startsWith(`${name}=`));
+  const pair = header?.split(/;\s*/).find((c) => c.startsWith(`${name}=`));
   return pair ? decodeURIComponent(pair.slice(name.length + 1)) : undefined;
 };
 
 const allowedOrigins = () => process.env.CORS_ORIGIN?.split(",") ?? [];
 
-/** Everyone currently in a dashboard room, one entry per user (multiple tabs collapse). */
+/**
+ * Everyone currently in a dashboard room, one entry per user (multiple tabs collapse).
+ * Presence is best-effort (Prompt 50): asking the whole cluster times out if another API
+ * instance has died, and that must never fail a join on a healthy instance. Then this
+ * instance's own sockets are used until the adapter notices the dead node.
+ */
 const presenceOf = async (dashboardId) => {
-  const sockets = await io.in(room(dashboardId)).fetchSockets();
+  let sockets;
+  try {
+    sockets = await io.in(room(dashboardId)).fetchSockets();
+  } catch (err) {
+    console.warn(
+      `presence: cluster lookup failed (${err.message}); using local sockets`
+    );
+    sockets = await io.local.in(room(dashboardId)).fetchSockets();
+  }
   const byUser = new Map();
   for (const s of sockets) {
     const prev = byUser.get(s.data.userId);
@@ -45,6 +58,17 @@ const broadcastPresence = async (dashboardId) =>
     dashboard_id: dashboardId,
     users: await presenceOf(dashboardId),
   });
+
+/**
+ * Separate worker process (npm run worker, problems-log #39): no HTTP server and no browser
+ * connections, but the same Postgres adapter, so the ticks, alerts and webhook updates it
+ * publishes reach the browsers connected to the API instances.
+ */
+const initEmitter = () => {
+  io = new Server();
+  io.adapter(createAdapter(pool));
+  return io;
+};
 
 const initRealtime = (httpServer) => {
   io = new Server(httpServer, {
@@ -83,7 +107,10 @@ const initRealtime = (httpServer) => {
       };
       next();
     } catch (err) {
-      next(err);
+      // A database failure is not a verdict on the session (Prompt 50): log it, send the client
+      // a generic, retryable error (never the internal message), and let it try again.
+      console.error("socket auth failed:", err.message);
+      next(Object.assign(new Error("unavailable"), { data: { retry: true } }));
     }
   });
 
@@ -165,10 +192,17 @@ const initRealtime = (httpServer) => {
   });
 
   // Long-lived sockets must not outlive their session (logout, password reset, removed
-  // membership, timeouts): re-check every minute and drop the dead ones.
+  // membership, timeouts): re-check every minute and drop the dead ones. If the database can't
+  // answer, nothing is dropped: a DB blip must not disconnect every live user (Prompt 50).
   const timer = setInterval(async () => {
     for (const socket of await io.local.fetchSockets()) {
-      const session = await resolveSession(socket.data.token).catch(() => null);
+      let session;
+      try {
+        session = await resolveSession(socket.data.token);
+      } catch (err) {
+        console.error("socket recheck skipped:", err.message);
+        return;
+      }
       if (!session?.role) socket.disconnect(true);
     }
   }, REVALIDATE_MS);
@@ -223,4 +257,10 @@ const closeSockets = ({ token, userId, exceptToken }) => {
   ).disconnectSockets(true);
 };
 
-export { closeSockets, initRealtime, publishDashboardChange, publishTeamEvent };
+export {
+  closeSockets,
+  initEmitter,
+  initRealtime,
+  publishDashboardChange,
+  publishTeamEvent,
+};

@@ -33,12 +33,17 @@ function useSize<T extends HTMLElement>() {
   return [ref, size] as const;
 }
 
-/** 0 .. a round number >= max, split into 4 steps (1/2/2.5/5 x 10^n). */
-function niceTicks(max: number) {
-  const raw = (max || 1) / 4;
+/**
+ * Round ticks covering min..max (both include 0) in steps of 1/2/2.5/5 x 10^n. Custom
+ * formulas can go negative (problems-log #39), so the axis spans below zero when they do.
+ */
+function niceTicks(min: number, max: number) {
+  const raw = (max - min || 1) / 4;
   const pow = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].find((m) => m * pow >= raw)! * pow;
-  return Array.from({ length: 5 }, (_, i) => i * step);
+  const first = Math.floor(min / step);
+  const last = Math.ceil(max / step);
+  return Array.from({ length: last - first + 1 }, (_, i) => (first + i) * step);
 }
 
 const timeLabel = (t: string, spanMs: number) =>
@@ -93,7 +98,10 @@ export function SeriesChart({
   const values = points.flatMap((p) => (p.value === null ? [] : [p.value]));
   const plotW = Math.max(width - PAD.left - PAD.right, 1);
   const plotH = Math.max(height - PAD.top - PAD.bottom, 1);
-  const ticks = niceTicks(Math.max(0, ...values));
+  const lo = Math.min(0, ...values);
+  const hi = Math.max(0, ...values);
+  const ticks = niceTicks(lo, hi === lo ? lo + 1 : hi); // all-zero data still gets an axis
+  const yMin = ticks[0];
   const yMax = ticks[ticks.length - 1];
   const band = plotW / points.length;
   const x = (i: number) =>
@@ -101,7 +109,8 @@ export function SeriesChart({
     (kind === "bar"
       ? band * (i + 0.5)
       : (plotW * i) / Math.max(points.length - 1, 1));
-  const y = (v: number) => PAD.top + plotH - (v / yMax) * plotH;
+  const y = (v: number) =>
+    PAD.top + plotH - ((v - yMin) / (yMax - yMin || 1)) * plotH;
   const t0 = new Date(points[0].t).getTime();
   const tN = new Date(points[points.length - 1].t).getTime();
   const span = tN - t0;
@@ -232,13 +241,16 @@ export function SeriesChart({
             : points.map((p, i) => {
                 if (p.value === null) return null;
                 const w = Math.max(band - 2, 1); // 2px surface gap between bars
-                const top = y(p.value);
-                const r = Math.min(4, w / 2, y(0) - top);
+                // From the zero line to the value, rounded at the far end (also for negatives).
+                const base = y(0);
+                const tip = y(p.value);
+                const dir = tip <= base ? 1 : -1;
+                const r = Math.min(4, w / 2, Math.abs(base - tip));
                 const left = x(i) - w / 2;
                 return (
                   <path
                     key={p.t}
-                    d={`M${left},${y(0)}V${top + r}Q${left},${top} ${left + r},${top}H${left + w - r}Q${left + w},${top} ${left + w},${top + r}V${y(0)}Z`}
+                    d={`M${left},${base}V${tip + dir * r}Q${left},${tip} ${left + r},${tip}H${left + w - r}Q${left + w},${tip} ${left + w},${tip + dir * r}V${base}Z`}
                     fill="var(--color-series)"
                     opacity={hover === null || hover === i ? 1 : 0.45}
                   />
@@ -251,7 +263,7 @@ export function SeriesChart({
                 x1={x(hover!)}
                 x2={x(hover!)}
                 y1={PAD.top}
-                y2={y(0)}
+                y2={PAD.top + plotH}
                 stroke="rgb(255 255 255 / 0.25)"
                 strokeDasharray="3 3"
               />

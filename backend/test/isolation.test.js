@@ -8,7 +8,7 @@ import { pool, withContext } from "../src/db/pool.js";
 const owner = new pg.Client({
   connectionString: process.env.MIGRATION_DATABASE_URL,
 });
-const ids = { user: {}, team: {} };
+const ids = { user: {}, team: {}, project: {} };
 const RLS_VIOLATION = "42501";
 
 before(async () => {
@@ -19,6 +19,12 @@ before(async () => {
   );
   for (const user of users) ids.user[user.email.split("@")[0]] = user.id;
   for (const team of teams) ids.team[team.name] = team.id;
+  // Tier 3 A: a dashboard needs a project of its team (the first one is enough here).
+  const { rows: projects } = await owner.query(
+    "SELECT DISTINCT ON (team_id) id, team_id FROM projects ORDER BY team_id, created_at"
+  );
+  for (const team of teams)
+    ids.project[team.name] = projects.find((p) => p.team_id === team.id)?.id;
   ids.org = teams[0]?.org_id;
   assert.ok(
     ids.org && ids.team.Finance && ids.team.Marketing,
@@ -144,15 +150,20 @@ describe("team isolation", () => {
       const { rows } = await client.query(
         "SELECT DISTINCT team_id FROM metric_points"
       );
-      assert.equal(rows.length, 2);
+      // Includes both seeded teams. Not "exactly 2": the Tier 2/3 suites run in parallel and
+      // add throwaway teams of the same org while they run (problems-log #41).
+      const seen = rows.map((r) => r.team_id);
+      assert.ok(
+        seen.includes(ids.team.Finance) && seen.includes(ids.team.Marketing)
+      );
     }));
 });
 
 describe("role permissions", () => {
   const insertDashboard = (client, team, name) =>
     client.query(
-      "INSERT INTO dashboards (org_id, team_id, name) VALUES ($1, $2, $3) RETURNING id",
-      [ids.org, ids.team[team], name]
+      "INSERT INTO dashboards (org_id, team_id, project_id, name) VALUES ($1, $2, $3, $4) RETURNING id",
+      [ids.org, ids.team[team], ids.project[team], name]
     );
 
   test("a viewer cannot create a dashboard", () =>

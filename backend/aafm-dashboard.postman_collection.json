@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "AAFM Dashboard API (Tiers 1 + 2)",
+    "name": "AAFM Dashboard API (Tiers 1-3)",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Multi-tenant analytics dashboard API: Org → Team hierarchy, RLS isolation, server-side sessions; Tier 2 adds active users, KPIs (ARPU, CTR, error rate) and anomaly alerts. Real-time (Socket.IO) is covered by backend/test/realtime.test.js and tier2.test.js, since Postman collections cannot drive Socket.IO.\n\n**Setup**\n1. `npm run migrate && npm run seed && npm run dev` in `backend/`.\n2. The suite signs in ~11 times; the default auth rate limit is 10 per 15 min per IP, so set `AUTH_RATE_LIMIT=100` in `backend/.env` for local runs.\n3. Run the whole collection in order with the Collection Runner (folders build on each other's saved variables).\n\n**How auth works here**: the session is an HttpOnly cookie that Postman's cookie jar keeps automatically. Each `Sign in` request switches the active user. Every write sends `X-Requested-With` (CSRF guard); requests in `07 Security` omit it on purpose.\n\nSeed users (org `acme`, password `Password@123`): super@ (Super Admin), alice@ (Finance admin + Marketing viewer), bob@ (Finance editor), carol@ (Marketing viewer), dave@ (Marketing admin)."
+    "description": "Multi-tenant analytics dashboard API: Org → Team hierarchy, RLS isolation, server-side sessions; Tier 2 adds active users, KPIs (ARPU, CTR, error rate) and anomaly alerts; Tier 3 adds projects (Org → Team → Project), custom metric formulas, the audit log and signed webhooks. Real-time (Socket.IO) and webhook delivery to a live receiver are covered by backend/test/realtime.test.js, tier2.test.js and tier3.test.js, since Postman collections cannot drive Socket.IO.\n\n**Setup**\n1. `npm run migrate && npm run seed && npm run dev` in `backend/`.\n2. The suite signs in ~13 times; the default auth rate limit is 10 per 15 min per IP, so set `AUTH_RATE_LIMIT=100` in `backend/.env` for local runs.\n3. Run the whole collection in order with the Collection Runner (folders build on each other's saved variables).\n\n**How auth works here**: the session is an HttpOnly cookie that Postman's cookie jar keeps automatically. Each `Sign in` request switches the active user. Every write sends `X-Requested-With` (CSRF guard); requests in `09 Security checks` omit it on purpose.\n\nSeed users (org `acme`, password `Password@123`): super@ (Super Admin), alice@ (Finance admin + Marketing viewer), bob@ (Finance editor), carol@ (Marketing viewer), dave@ (Marketing admin)."
   },
   "variable": [
     {
@@ -1542,7 +1542,997 @@
       ]
     },
     {
-      "name": "08 Security checks",
+      "name": "08 Tier 3: projects, custom metrics, audit, webhooks",
+      "description": "Starts as Bob (Finance editor), then Alice as Finance admin. Org → Team → Project, custom metric formulas, the append-only audit log and signed webhooks (Standard Webhooks).",
+      "item": [
+        {
+          "name": "Projects: list (Bob sees only Finance's)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const list = pm.response.json().data;",
+                  "pm.test(\"has projects\", () => pm.expect(list.length).to.be.above(0));",
+                  "pm.test(\"all in one team\", () => pm.expect(new Set(list.map((p) => p.team_id)).size).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/projects"
+          }
+        },
+        {
+          "name": "Projects: create as an Editor (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"nope\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sign in: Alice (Finance admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"org\": \"{{org}}\",\n  \"email\": \"alice@acme.test\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Select context: Finance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/context",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membership_id\": \"{{aliceFinanceMembershipId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Projects: create",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"projectId\", pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman {{$timestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Projects: rename",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{projectId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman renamed {{$timestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Dashboards: create inside the project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.test(\"belongs to the project\", () => pm.expect(d.project_id).to.eql(pm.collectionVariables.get(\"projectId\")));",
+                  "pm.collectionVariables.set(\"projectDashboardId\", d.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/dashboards",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"In a project\",\n  \"project_id\": \"{{projectId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Dashboards: filter by project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"exactly the new one\", () => pm.expect(pm.response.json().data).to.have.lengthOf(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dashboards?project_id={{projectId}}"
+          }
+        },
+        {
+          "name": "Summary: one project only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/metrics/summary?range=24h&project_id={{projectId}}"
+          }
+        },
+        {
+          "name": "Projects: delete (cascades its dashboards)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{projectId}}"
+          }
+        },
+        {
+          "name": "Dashboard of the deleted project (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dashboards/{{projectDashboardId}}"
+          }
+        },
+        {
+          "name": "Formula preview: valid",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"to\", new Date().toISOString());",
+                  "pm.collectionVariables.set(\"from\", new Date(Date.now() - 24 * 3600e3).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"has points\", () => pm.expect(pm.response.json().data.points.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/metrics/formula?formula=(clicks%20-%20errors)%20%2F%20page_views%20*%20100&from={{from}}&to={{to}}&bucket=1h"
+          }
+        },
+        {
+          "name": "Formula preview: unbalanced parenthesis (400 with position)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"points at the formula\", () => pm.expect(pm.response.json().errors[0].field).to.eql(\"formula\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/metrics/formula?formula=revenue%20%2F%20(users&from={{from}}&to={{to}}"
+          }
+        },
+        {
+          "name": "Formula: injection attempt (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/custom-metrics",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"evil\",\n  \"formula\": \"revenue; DROP TABLE users\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Custom metric: create",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"customId\", pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/custom-metrics",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Clean click share {{$timestamp}}\",\n  \"formula\": \"(clicks - errors) / page_views * 100\",\n  \"unit\": \"percent\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Custom metric: series",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"has points\", () => pm.expect(pm.response.json().data.points.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/metrics/custom?id={{customId}}&from={{from}}&to={{to}}&bucket=1h"
+          }
+        },
+        {
+          "name": "Add widget showing the custom metric",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"customWidgetId\", pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/dashboards/{{dashboardId}}/widgets",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"line\",\n  \"custom_metric_id\": \"{{customId}}\",\n  \"title\": \"Clean click share\",\n  \"x\": 0,\n  \"y\": 10,\n  \"w\": 6,\n  \"h\": 4\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete a custom metric still in use (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/custom-metrics/{{customId}}"
+          }
+        },
+        {
+          "name": "Remove that widget",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/widgets/{{customWidgetId}}"
+          }
+        },
+        {
+          "name": "Custom metric: delete",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/custom-metrics/{{customId}}"
+          }
+        },
+        {
+          "name": "Summary includes the team's custom metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"custom values present\", () => pm.expect(pm.response.json().data.custom.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/metrics/summary?range=24h"
+          }
+        },
+        {
+          "name": "Audit: Finance admin sees only Finance entries",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const rows = pm.response.json().data.entries;",
+                  "pm.test(\"has entries\", () => pm.expect(rows.length).to.be.above(0));",
+                  "pm.test(\"all Finance\", () => pm.expect(rows.every((r) => r.team_id === pm.collectionVariables.get(\"financeTeamId\"))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/audit?limit=50"
+          }
+        },
+        {
+          "name": "Audit: project actions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"project.create recorded\", () => pm.expect(pm.response.json().data.entries.some((r) => r.action === \"project.create\")).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/audit?action=project."
+          }
+        },
+        {
+          "name": "Audit: verify the hash chain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"intact\", () => pm.expect(pm.response.json().data.intact).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/audit/verify"
+          }
+        },
+        {
+          "name": "Webhook: ftp URL (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"ftp://hooks.example.invalid/x\",\n  \"events\": [\n    \"alert.opened\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhook: credentials in URL (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://user:pass@hooks.example.invalid/x\",\n  \"events\": [\n    \"alert.opened\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhook: unknown event (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://hooks.example.invalid/x\",\n  \"events\": [\n    \"everything\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhook: create (secret shown once)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const hook = pm.response.json().data;",
+                  "pm.test(\"whsec_ secret\", () => pm.expect(hook.secret.startsWith(\"whsec_\")).to.eql(true));",
+                  "pm.collectionVariables.set(\"hookId\", hook.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://hooks.example.invalid/aafm\",\n  \"description\": \"Postman\",\n  \"events\": [\n    \"alert.opened\",\n    \"dashboard.created\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhooks: list never includes secrets",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"no secret\", () => pm.expect(pm.response.json().data.every((h) => !(\"secret\" in h))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/webhooks"
+          }
+        },
+        {
+          "name": "Webhook: send a test event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{hookId}}/test"
+          }
+        },
+        {
+          "name": "Webhook: deliveries",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the test is queued\", () => pm.expect(pm.response.json().data.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{hookId}}/deliveries"
+          }
+        },
+        {
+          "name": "Webhook: rotate the signing secret",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"new secret\", () => pm.expect(pm.response.json().data.secret.startsWith(\"whsec_\")).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{hookId}}/rotate-secret"
+          }
+        },
+        {
+          "name": "Webhook: disable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"disabled\", () => pm.expect(pm.response.json().data.enabled).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{hookId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhook: delete",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{hookId}}"
+          }
+        },
+        {
+          "name": "Sign in: Bob (Finance editor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Requested-With",
+                "value": "postman"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"org\": \"{{org}}\",\n  \"email\": \"bob@acme.test\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Webhooks as an Editor (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/webhooks"
+          }
+        },
+        {
+          "name": "Audit log as an Editor (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/audit"
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 Security checks",
       "description": "Negative cases a reviewer will try. Each must fail closed.",
       "item": [
         {

@@ -22,6 +22,15 @@ export const getSocket = () => {
   s.on("disconnect", (reason) => {
     if (reason === "io server disconnect") setTimeout(() => s.connect(), 1000);
   });
+  // The server couldn't check the session (database briefly unavailable, Prompt 50). That is
+  // not a refusal, but Socket.IO never retries handshake errors itself: retry with back-off
+  // (5 s, 10 s, ... up to 60 s) until it answers.
+  let retries = 0;
+  s.on("connect", () => (retries = 0));
+  s.on("connect_error", (err: Error & { data?: { retry?: boolean } }) => {
+    if (err.data?.retry)
+      setTimeout(() => s.connect(), Math.min(60_000, 5_000 * 2 ** retries++));
+  });
   return (socket = s);
 };
 
@@ -132,5 +141,5 @@ export function useSocketEvent<T>(
 
 export type MetricTick = {
   team_id: string;
-  points: { metric: string; ts: string; value: number }[];
+  points: { project_id: string; metric: string; ts: string; value: number }[];
 };

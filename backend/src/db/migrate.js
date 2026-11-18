@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
+import { assertOwnerBypassesRls } from "./preflight.js";
 
 const MIGRATIONS_DIR = new URL("./migrations/", import.meta.url);
 const APP_ROLE = "aafm_app";
@@ -25,6 +26,7 @@ const migrate = async () => {
   });
   await client.connect();
   try {
+    await assertOwnerBypassesRls(client);
     await ensureAppRole(client);
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
       name       text PRIMARY KEY,

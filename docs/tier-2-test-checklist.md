@@ -85,10 +85,10 @@ The checks run every 30 s. Natural spikes happen at random (several per hour acr
 **To trigger one now** (after setup step 0.5, as the DB owner). Have Bob (Finance) on the **Finance Overview** dashboard first:
 
 ```
-psql "<MIGRATION_DATABASE_URL from backend/.env>" -c "INSERT INTO metric_incidents (team_id, metric, until) SELECT id, 'errors', now() + interval '6 minutes' FROM teams WHERE name = 'Finance' ON CONFLICT (team_id, metric) DO UPDATE SET until = excluded.until"
+psql "<MIGRATION_DATABASE_URL from backend/.env>" -c "INSERT INTO metric_incidents (project_id, metric, until) SELECT p.id, 'errors', now() + interval '6 minutes' FROM projects p JOIN teams t ON t.id = p.team_id WHERE t.name = 'Finance' AND p.name = 'Web App' ON CONFLICT (project_id, metric) DO UPDATE SET until = excluded.until"
 ```
 
-This multiplies Finance's errors by 4 for 6 minutes.
+This multiplies the errors of Finance's **Web App** project by 4 for 6 minutes. (Since Tier 3, incidents and alerts are per project; open the **Web App Overview** dashboard to watch it.)
 
 - [ ] **6.1 Opens.** Have Carol (Marketing) open in an incognito window too. Within about 1–2 minutes, Bob's window shows:
   - a **toast**: "Anomaly detected · Errors 3.xσ above normal";

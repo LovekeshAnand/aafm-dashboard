@@ -4,7 +4,45 @@ import type { NextConfig } from "next";
 // cookie stays first-party (SameSite=Strict works, no CORS needed).
 const backendUrl = process.env.BACKEND_URL ?? "http://localhost:8000";
 
+// E21 (docs/edge-case-audit.md): Content-Security-Policy as defense in depth against XSS.
+// Next.js's "Without Nonces" form (frontend/node_modules/next/dist/docs/01-app/02-guides/
+// content-security-policy.md): nonces need every page dynamically rendered and are
+// incompatible with Partial Prerendering, which this app uses (cacheComponents). Scripts and
+// styles stay same-origin; the only other connection allowed is the dev socket URL (in
+// production the socket is same-origin through Nginx). Fonts are self-hosted by next/font.
+const isDev = process.env.NODE_ENV === "development";
+const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+const csp = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' blob: data:",
+  "font-src 'self'",
+  `connect-src 'self'${socketUrl ? ` ${socketUrl} ${socketUrl.replace(/^http/, "ws")}` : ""}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  // No upgrade-insecure-requests: it would break a local production run over plain HTTP.
+  // HTTPS is enforced by HSTS at Nginx in the deployment.
+].join("; ");
+
 const nextConfig: NextConfig = {
+  headers: async () => [
+    {
+      source: "/(.*)",
+      headers: [
+        { key: "Content-Security-Policy", value: csp },
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        {
+          key: "Permissions-Policy",
+          value: "camera=(), microphone=(), geolocation=()",
+        },
+      ],
+    },
+  ],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

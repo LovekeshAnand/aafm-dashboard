@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { displayName } from "../utils/validation.js";
 import { pool, withContext } from "../db/pool.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { closeSockets } from "../realtime.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { audit } from "../utils/audit.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import {
   endSession,
@@ -23,7 +25,7 @@ const slug = z
   .trim()
   .toLowerCase()
   .regex(/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/);
-const name = z.string().trim().min(1).max(100);
+const name = displayName(100);
 
 const signupSchema = z.strictObject({
   org_name: name,
@@ -49,6 +51,11 @@ const INVALID_LOGIN = "Invalid organization, email or password";
 // Unknown accounts still pay for one scrypt verification, so timing doesn't reveal them either.
 const dummyHash = hashPassword("timing-equalizer");
 
+// Tier 3 B: sign-in events happen before (or across) a team context, so they are written
+// with an explicit org/user context of their own.
+const auditAs = (req, { userId, orgId }, action, options) =>
+  withContext({ userId, orgId }, (db) => audit(db, req, action, options));
+
 const myMemberships = async (userId, orgId) =>
   (
     await withContext({ userId, orgId }, (db) =>
@@ -72,6 +79,12 @@ const signup = asyncHandler(async (req, res) => {
     orgId: account.org_id,
     membershipId: account.membership_id,
   });
+  await auditAs(
+    req,
+    { userId: account.user_id, orgId: account.org_id },
+    "org.create",
+    { type: "organization", id: account.org_id, meta: { slug: body.slug } }
+  );
   res
     .status(201)
     .json(
@@ -93,12 +106,32 @@ const login = asyncHandler(async (req, res) => {
     account?.password_hash ?? (await dummyHash)
   );
 
+  // Failures are audited only for a real account (an unknown org has no trail to write to).
+  // Not awaited, so the extra write doesn't make known accounts measurably slower to refuse.
   if (!account || account.locked || !valid) {
     if (account && !account.locked)
       await pool.query("SELECT app.record_login($1, false)", [account.user_id]);
+    if (account)
+      auditAs(
+        req,
+        { userId: account.user_id, orgId: account.org_id },
+        "auth.login_failed",
+        {
+          type: "user",
+          id: account.user_id,
+          result: "failed",
+          meta: { reason: account.locked ? "locked" : "password" },
+        }
+      ).catch((err) => console.error("audit failed:", err.message));
     throw new ApiError(401, INVALID_LOGIN);
   }
   await pool.query("SELECT app.record_login($1, true)", [account.user_id]);
+  await auditAs(
+    req,
+    { userId: account.user_id, orgId: account.org_id },
+    "auth.login",
+    { type: "user", id: account.user_id }
+  );
 
   const memberships = await myMemberships(account.user_id, account.org_id);
   const autoSelect =
@@ -135,6 +168,17 @@ const selectContext = asyncHandler(async (req, res) => {
   if (!(await rotateSession(res, req.auth.token, membership.id)))
     throw new ApiError(401, "Not signed in");
   closeSockets({ token: req.auth.token }); // the old session id is dead
+  await auditAs(
+    req,
+    { userId: req.auth.user_id, orgId: req.auth.org_id },
+    "auth.context_switch",
+    {
+      type: "membership",
+      id: membership.id,
+      teamId: membership.team_id,
+      meta: { role: membership.role, team: membership.team_name },
+    }
+  );
 
   res.json(
     new ApiResponse(200, { active_membership: membership }, "Context selected")
@@ -185,6 +229,7 @@ const changePassword = asyncHandler(async (req, res) => {
       "UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1",
       [user_id, newHash]
     );
+    await audit(db, req, "auth.password_change", { type: "user", id: user_id });
   });
   await pool.query(
     "DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2",
@@ -195,6 +240,9 @@ const changePassword = asyncHandler(async (req, res) => {
 });
 
 const logout = asyncHandler(async (req, res) => {
+  await req.db((db) =>
+    audit(db, req, "auth.logout", { type: "user", id: req.auth.user_id })
+  );
   await endSession(res, req.auth.token);
   closeSockets({ token: req.auth.token });
   res.json(new ApiResponse(200, null, "Signed out"));

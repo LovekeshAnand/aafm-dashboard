@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
@@ -15,6 +16,17 @@ app.disable("x-powered-by");
 // Exact hop count of trusted proxies (1 = Nginx on EC2). Never `true`: clients could spoof their IP.
 app.set("trust proxy", Number(process.env.TRUST_PROXY) || 0);
 
+// E22: one id per request, in the response header, error logs and audit entries, so a user's
+// report, the server log and the audit trail can be matched. A well-formed id from the proxy
+// (Nginx $request_id) is kept; anything else is replaced.
+app.use((req, res, next) => {
+  const incoming = req.get("X-Request-Id");
+  req.id = /^[A-Za-z0-9-]{8,64}$/.test(incoming ?? "")
+    ? incoming
+    : randomUUID();
+  res.set("X-Request-Id", req.id);
+  next();
+});
 app.use(helmet());
 // Only the configured frontend origin may send credentialed requests; unset = no CORS at all.
 app.use(
