@@ -52,6 +52,8 @@ Setup:
 - [ ] **5.5** As Alice, **End access now**. Carol's card disappears and she is notified.
 - [ ] **5.6** Decline a second request with a note. Carol sees the note.
 - [ ] **5.7** As Bob (editor, not admin), there is no review section.
+- [ ] **5.8** (Prompt 78) As Super Admin, the request is **not** visible: there's no review section, and the page explains that the Super Admin already sees every team. Dave (Marketing admin) doesn't see Finance's requests either. The audit log still records them.
+- [ ] **5.9** In a team workspace the page shows the three steps (Ask → the team's Admins decide → See it here), and the empty "Shared with me" section has an **Ask another team for a figure** button.
 
 ## 6. Reusing metrics (F2)
 

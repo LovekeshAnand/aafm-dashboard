@@ -20,7 +20,6 @@ import {
 import { api, errorText } from "@/lib/api";
 import { useSocketEvent } from "@/lib/realtime";
 import {
-  ADMINS,
   type Kpi,
   KPI_FORMULA,
   KPI_LABEL,
@@ -337,7 +336,10 @@ function Review({
 export default function SharedDataPage() {
   const { active_membership: active } = useSession();
   const mine = useApi<AccessRequest[]>("/access-requests?box=mine");
-  const isAdmin = !!active && ADMINS.includes(active.role);
+  // Prompt 78: only the requested team's Admins review requests (not the Super Admin, who
+  // already sees every team's data).
+  const isAdmin = active?.role === "admin";
+  const orgWide = !active?.team_id;
   const incoming = useApi<AccessRequest[]>(
     isAdmin ? "/access-requests?box=incoming" : null
   );
@@ -359,13 +361,53 @@ export default function SharedDataPage() {
         title="Shared data"
         subtitle="Ask another team to share one figure with you, for a limited time. You see only that figure, read-only."
         actions={
-          active?.team_id && (
+          !orgWide && (
             <Button onClick={() => setAsking(true)}>
               <Plus size={16} /> Ask for access
             </Button>
           )
         }
       />
+      {orgWide ? (
+        <div className="mb-6">
+          <Notice tone="info">
+            As Super Admin you already see every team&apos;s data, so there is
+            nothing to ask for here. Requests are made and approved inside a
+            team workspace: switch to one from the sidebar to ask as a member of
+            that team.
+          </Notice>
+        </div>
+      ) : (
+        <ol className="mb-8 grid gap-3 text-sm sm:grid-cols-3">
+          {[
+            [
+              "Ask",
+              "Pick a team and one figure (e.g. ARPU of Finance), say why and for how long.",
+            ],
+            [
+              "The team's Admins decide",
+              "Only that team's Admins see your request. They approve it for a set time, or decline with a note.",
+            ],
+            [
+              "See it here",
+              "Once approved, the figure appears under Shared with me, read-only, until it expires.",
+            ],
+          ].map(([title, text], i) => (
+            <li
+              key={title}
+              className="flex gap-3 rounded-xl border border-line bg-panel p-4"
+            >
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-glass-strong text-xs font-semibold text-ink-2">
+                {i + 1}
+              </span>
+              <span>
+                <span className="block font-medium">{title}</span>
+                <span className="text-ink-3">{text}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
       {notice && (
         <div className="mb-4" onClick={() => setNotice("")}>
           <Notice tone="success">{notice}</Notice>
@@ -409,9 +451,14 @@ export default function SharedDataPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-ink-3">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-line p-5 text-sm text-ink-3">
             Nothing shared with you right now.
-          </p>
+            {!orgWide && (
+              <Button variant="ghost" onClick={() => setAsking(true)}>
+                <Plus size={16} /> Ask another team for a figure
+              </Button>
+            )}
+          </div>
         )}
       </section>
 

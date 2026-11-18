@@ -661,3 +661,21 @@ i created a new metric and added it as a widget so got these errors
 (Pasted: React warning "Encountered two children with the same key, `2026-11-18T17:28:15.390Z`" at src/components/charts.tsx (181:15) `<g key={b.from}>`, via SeriesChart ← WidgetBody ← DashboardBoard.)
 
 ---
+
+## Prompt 78 (2026-11-18 23:52 IST)
+
+in shared data there is no way to create a request to other teams how can a user do it how can someone create a request and that request should only be visible to requested admin only
+
+---
+
+### Questions Claude asked (dialog)
+
+1. Who should see and decide a data-access request (e.g. Carol asks Finance for ARPU)? Today: the requester, every Admin of Finance, and the Super Admin.
+2. Should the Super Admin get the 'Ask for access' option at all? They can already see every team's data.
+
+### User's answers
+
+1. Finance's Admins only (Recommended)
+2. No, explain instead (Recommended)
+
+---

@@ -1,7 +1,8 @@
 -- Feature F7 (Prompts 68-69): request access to one figure of another team ("I want to see
 -- ARPU of Finance only"), modelled on Google Drive's request-access flow: the requester gives a
--- reason, the team's Admins (and the Super Admin) approve with an expiry or decline, and both
--- sides are notified.
+-- reason, the requested team's Admins approve with an expiry or decline, and both sides are
+-- notified. Prompt 78: only that team's Admins see and decide a request (not the Super Admin,
+-- who already sees every team's data and still sees these actions in the audit log).
 --
 -- What an approval grants (Prompt 69: "that one metric, read-only"): exactly the requested
 -- metric or KPI, as computed values, until it expires. It is NOT an RLS grant on metric rows:
@@ -36,20 +37,18 @@ CREATE UNIQUE INDEX access_requests_one_pending_uq
 CREATE INDEX access_requests_requester_idx ON access_requests (requester_id, created_at DESC);
 CREATE INDEX access_requests_team_idx ON access_requests (target_team_id, created_at DESC);
 
--- Visible to the requester, to the target team's Admins (in that team's context) and to the
--- Super Admin. Decisions (UPDATE) only by those approvers; requests are created through
--- app.request_access, which checks the figure and the team.
+-- Visible to the requester and to the requested team's Admins (in that team's context) only.
+-- Decisions (UPDATE) only by those Admins; requests are created through app.request_access,
+-- which checks the figure and the team.
 ALTER TABLE access_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE access_requests FORCE ROW LEVEL SECURITY;
 CREATE POLICY access_requests_read ON access_requests FOR SELECT
   USING (org_id = app.current_org_id()
          AND (requester_id = app.current_user_id()
-              OR (SELECT app.active_role()) = 'super_admin'
               OR ((SELECT app.active_role()) = 'admin' AND target_team_id = app.current_team_id())));
 CREATE POLICY access_requests_decide ON access_requests FOR UPDATE
   USING (org_id = app.current_org_id()
-         AND ((SELECT app.active_role()) = 'super_admin'
-              OR ((SELECT app.active_role()) = 'admin' AND target_team_id = app.current_team_id())))
+         AND (SELECT app.active_role()) = 'admin' AND target_team_id = app.current_team_id())
   WITH CHECK (org_id = app.current_org_id());
 GRANT SELECT ON access_requests TO aafm_app;
 GRANT UPDATE (status, decided_by, decided_at, decision_note, expires_at) ON access_requests TO aafm_app;
@@ -65,7 +64,7 @@ CREATE FUNCTION app.team_directory() RETURNS TABLE (id uuid, name text)
 
 -- Create a request. Refuses: another org's team, your own current team, an unknown figure, and
 -- a person who can already see that team. Returns the request and who should approve it (the
--- target team's Admins and the org's Super Admins) for the notifications.
+-- requested team's Admins) for the notifications.
 CREATE FUNCTION app.request_access(p_team uuid, p_kind text, p_source text, p_reason text,
                                    p_days integer)
   RETURNS TABLE (request_id uuid, approver_ids uuid[], team_name text)
@@ -93,6 +92,10 @@ CREATE FUNCTION app.request_access(p_team uuid, p_kind text, p_source text, p_re
     IF v_metrics IS NULL THEN
       RAISE EXCEPTION 'unknown metric or KPI' USING ERRCODE = '22023';
     END IF;
+    -- Only the team's Admins decide, so a team without one can't take requests.
+    IF NOT EXISTS (SELECT 1 FROM memberships m WHERE m.team_id = p_team AND m.role = 'admin') THEN
+      RAISE EXCEPTION 'This team has no Admin to approve requests yet' USING ERRCODE = 'LIM01';
+    END IF;
 
     INSERT INTO access_requests (org_id, requester_id, requester_name, target_team_id,
                                  source_kind, source, metrics, reason, days)
@@ -105,7 +108,7 @@ CREATE FUNCTION app.request_access(p_team uuid, p_kind text, p_source text, p_re
       SELECT v_id,
              ARRAY(SELECT DISTINCT m.user_id FROM memberships m
                    WHERE m.org_id = app.current_org_id()
-                     AND ((m.team_id = p_team AND m.role = 'admin') OR m.role = 'super_admin')),
+                     AND m.team_id = p_team AND m.role = 'admin'),
              (SELECT t.name FROM teams t WHERE t.id = p_team);
   END $$;
 

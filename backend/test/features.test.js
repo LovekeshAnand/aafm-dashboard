@@ -445,11 +445,7 @@ describe("data access requests (F7)", () => {
       [request]
     );
     const notified = rows.map((r) => r.user_id).sort();
-    assert.deepEqual(
-      notified,
-      [users.boss, users.mia].sort(),
-      "Money's admin and the Super Admin"
-    );
+    assert.deepEqual(notified, [users.mia], "only Money's admin (Prompt 78)");
     assert.equal(rows[0].title, "Feat ann asks to see ARPU of Money");
     assert.equal(
       (await ann.call("GET", `/shared/${request}/summary`)).status,
@@ -475,7 +471,38 @@ describe("data access requests (F7)", () => {
     assert.match(own.body.message, /already see/);
   });
 
-  test("only that team's admins (or the Super Admin) can decide", async () => {
+  test("only that team's admins see and decide it (Prompt 78)", async () => {
+    // Not the Super Admin: they already see every team's data.
+    const boss = await signIn("boss");
+    assert.deepEqual(
+      (await boss.call("GET", "/access-requests?box=incoming")).body.data,
+      []
+    );
+    assert.equal(
+      (
+        await boss.call("POST", `/access-requests/${request}/decide`, {
+          approve: true,
+        })
+      ).status,
+      404
+    );
+    // A team without an Admin can't take requests (nobody could decide them).
+    const {
+      rows: [empty],
+    } = await owner.query(
+      "INSERT INTO teams (org_id, name) VALUES ($1, 'No admins') RETURNING id",
+      [org.id]
+    );
+    const ann = await signIn("ann");
+    const noAdmin = await ann.call("POST", "/access-requests", {
+      team_id: empty.id,
+      kind: "metric",
+      source: "clicks",
+      reason: "No admin there",
+      days: 1,
+    });
+    assert.equal(noAdmin.status, 409);
+    assert.match(noAdmin.body.message, /no Admin/);
     const lead = await signIn("lead"); // Ops admin, not Money
     assert.deepEqual(
       (await lead.call("GET", "/access-requests?box=incoming")).body.data,
